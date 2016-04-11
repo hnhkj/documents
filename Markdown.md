@@ -10,8 +10,7 @@ ATOM，Markdown+R,MarkdownPad2
 
 R markdown是R语言运行环境RStudio所使用的扩展的markdown标签语言，能够方便的利用R语言生成web格式的报告。它包括核心的Markdown语法，并能将其中插入的R代码区块的运行结果显示在最终文档里。
 
-详细的文档可以参考<http://rmarkdown.rstudio.com/>，中文的话可以参考
-<http://www.jianshu.com/p/gwTSKt>
+详细的文档可以参考<http://rmarkdown.rstudio.com/>，中文的话可以参考<http://www.jianshu.com/p/gwTSKt>。
 
 对于RStudio软件来讲，确实是一个非常强大的工具软件。它可以将R markdown文件轻而易举地转换成html,docx,pdf文件。而且转换的结果非常的漂亮。这是我最为喜欢的一款软件。
 
