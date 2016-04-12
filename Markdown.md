@@ -1,11 +1,11 @@
+[TOC]
+
 ---
 title: "Markdown应用"
 author: "hnhkj@163.com"
 date: "2016年4月12日"
 output: html_document
 ---
-
-[TOC]
 
 ## 前言
 
