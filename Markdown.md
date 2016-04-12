@@ -5,6 +5,8 @@ date: "2016年4月12日"
 output: html_document
 ---
 
+[TOC]
+
 ## 前言
 
 我查找了几款离线的编辑器：
