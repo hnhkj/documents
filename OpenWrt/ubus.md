@@ -1,6 +1,13 @@
+---
+title: "OpenWrt micro bus 架构"
+author: "hnhkj@163.com"
+date: "2016年4月12日"
+output: html_document
+---
+
 https://wiki.openwrt.org/doc/techref/ubus
 
-#ubus (OpenWrt micro bus architecture)//ubus (OpenWrt micro bus 架构)
+# ubus (OpenWrt micro bus architecture)//ubus (OpenWrt micro bus 架构)
 
 To provide communication between various daemons and applications in OpenWrt an ubus project has been developed. It consists of few parts including daemon, library and some extra helpers.
 
@@ -22,13 +29,13 @@ The code is published under LGPL 2.1 and can be found via git at http://git.open
 
 代码在LGPL 2.1授权方法下发布，你可以通过git在git://nbd.name/luci2/ubus.git或通过http在http://nbd.name/gitweb.cgi?p=luci2/ubus.git;a=summary获取。 ubus从r28499起被包含在OpenWrt中。
 
-##Command-line ubus tool  //ubus命令行工具
+## Command-line ubus tool  //ubus命令行工具
 
 The ubus command line tool allows to interact with the ubusd server (with all currently registered services). It's useful for investigating/debugging registered namespaces as well as writing shell scripts. For calling procedures with parameters and returning responses it uses user-friendly JSON format. Below is an explanation of its commands.
 
 ubus可以和ubusd服务器交互(和当前所有已经注册的服务). 它对研究和调试注册的命名空间以及编写脚本非常有用。对于调用带参数和返回信息的方法，它使用友好的JSON格式。下面是它的命令说明。
 
-##list  //列表
+## list  //列表
 
 By default, list all namespaces registered with the RPC server:
 
@@ -59,7 +66,7 @@ If invoked with -v, additionally the procedures and their argument signatures ar
 	"set_data": {  }
     root@uplink:~#
 
-##call //调用
+## call //调用
 
 Calls a given procedure within a given namespace and passes given message to it:
 
@@ -88,7 +95,7 @@ Calls a given procedure within a given namespace and passes given message to it:
     		}
     	],
     	"data": {
-		
+
 	    }
     }
     root@uplink:~#
@@ -133,7 +140,7 @@ The message argument must be a valid JSON string, with keys and values set accor
 	}
 	root@uplink:~#
 
-##listen  //侦听
+## listen  //侦听
 
 Setup a listening socket and observe incoming events:
 
@@ -148,9 +155,9 @@ Setup a listening socket and observe incoming events:
 	{ "network.interface": { "action": "ifdown", "interface": "v6" } }
 	{ "network.interface": { "action": "ifup", "interface": "he" } }
 	{ "network.interface": { "action": "ifup", "interface": "v6" } }
-	root@uplink:~# 
+	root@uplink:~#
 
-##send  //发送
+## send  //发送
 
 Send an event notification:
 
@@ -159,16 +166,16 @@ Send an event notification:
 	root@uplink:~# ubus listen &
 	root@uplink:~# ubus send foo '{ "bar": "baz" }'
 	{ "foo": { "bar": "baz" } }
-	root@uplink:~# 
+	root@uplink:~#
 
 
-##Access to ubus over HTTP //通过HTTP访问ubus
+## Access to ubus over HTTP //通过HTTP访问ubus
 
 There is an uhttpd plugin called uhttpd-mod-ubus that allows ubus calls using HTTP protocol. Requests have to be send to the /ubus URL (unless changed) using POST method. This interface uses jsonrpc v2.0 There are a few steps that you will need to understand. (Documentation written while using BarrierBreaker r40831, ymmv)
 
 有一个uhttpd的插件uhttpd-mod-ubus，它可允许通过HTTP协议调用ubus。请求必须使用POST方法发送到/ubs地址（除非改变）。这个接口使用jsonrpc v2.0，有几个步骤需要理解。（写文档的时候使用BarrierBreaker r40831,ymmv）。
 
-###ACLs(access control list) //访问控制列表
+#### ACLs(access control list) //访问控制列表
 
 While logged into via ssh, you have direct, full access to ubus. When you're accessing the /ubus url in uhttpd however, uhttpd runs "ubus call session access '{ ubus-rpc-session, requested-object, requested-method }' and whoever is providing the ubus session.* namespace is in charge of implementing the ACL. This happens to be rpcd at the moment, with the http-json interface, for friendly operation with browser code, but this is just one possible implmementation. Because we're using rpcd to implement the ACLs at this time, this allows/requires (depending on your point of view) ACLs to be configured in /usr/share/rpcd/acl.d/*.json. The names of the files in /usr/share/rpcd/acl.d/*.json don't matter, but the top level keys define roles. The default acl, listed below, only defines the login methods, so you can login, but you still wouldn't be able to do anything.
 
@@ -211,7 +218,7 @@ An example of a "security is for suckers" config, where a "superuser" ACL group 
         }
 	}
 
-Below is an example of an ACL definition that only allows access to some specific ubus modules, rather than unrestricted 
+Below is an example of an ACL definition that only allows access to some specific ubus modules, rather than unrestricted
 access to everything.
 
 下面是一个ACL定义，只允许访问一些特定的ubus模组，而不是无限制的访问任何事情。
@@ -242,7 +249,7 @@ Note: Before we leave this section, you may have noticed that there's both a "ub
 注意：我们离开这部分之前，你也许注意到“ubus”和“uci”两部分，即使ubus有一个uci方法。
 
 
-###Authentication  //认证
+#### Authentication  //认证
 
 Now that we have an ACL that allows operations beyond just logging in, we can actually try this out. As mentioned, rpcd is handling this, so you need an entry in /etc/config/rpcd
 
@@ -273,11 +280,11 @@ If you ever receive a response like, {"jsonrpc":"2.0","id":1,"result":[6]} That 
 
 To list all active sessions, try ubus call session list
 
-###Session management//会话管理
+#### Session management//会话管理
 
 A session is automatically renewned on every use. There are plans to use these sessions even for luci1, but at present, if you use this interface in a luci1 environment, you'll need to manage sessions yourself.
 
-###Actually making calls
+#### Actually making calls
 
 Now that you have a ubus_rpc_session you can make calls, based on your ACLs and the available ubus services.  ubus list -v is your primary documentation on what can be done, but see the rest of this page for more information. For example, ubus list file -v returns
 
@@ -293,10 +300,10 @@ The json container format is:
 json容器格式：
 
 	{ "jsonrpc": "2.0",
-	  "id": <unique-id-to-identify-request>, 
+	  "id": <unique-id-to-identify-request>,
 	  "method": "call",
 	  "params": [
-    	         <ubus_rpc_session>, <ubus_object>, <ubus_method>, 
+    	         <ubus_rpc_session>, <ubus_object>, <ubus_method>,
     	         { <ubus_arguments> }
     	        ]
 	}
@@ -310,7 +317,7 @@ An example request to read a file would be:
 	$ curl -d '{ "jsonrpc": "2.0", "id": 1, "method": "call", "params": [ "7cba69a942c0e9db1eb7982cd91f3a48", "file", "read", { "path": "/tmp/hello.karl" } ] }'  http://eg-134867.local/ubus
 	{"jsonrpc":"2.0","id":1,"result":[0,{"data":"this is the contents of a file\n"}]}
 
-###Lua module for ubus//关于ubus的lua模组
+#### Lua module for ubus//关于ubus的lua模组
 
 This is even possible to use ubus in lua scripts. Of course it's not possible to use native libraries directly in lua, so an extra module has been created. It's simply called ubus and is a simple interface between lua scripts and the ubus (it uses libubus internally).
 
@@ -320,7 +327,7 @@ Load module
 
 	require "ubus"
 
-###Establish connection //建立连接
+#### Establish connection //建立连接
 
 	local conn = ubus.connect()
 	if not conn then
@@ -331,7 +338,7 @@ Optional arguments to connect() are a path to use for sockets (pass nil to use t
 
 	local conn = ubus.connect(nil, 500) -- default socket path, 500ms per call timeout
 
-###Iterate all namespaces and procedures  //循环访问所有的命名空间和程序
+#### Iterate all namespaces and procedures  //循环访问所有的命名空间和程序
 
 	local namespaces = conn:objects()
 	for i, n in ipairs(namespaces) do
@@ -345,44 +352,44 @@ Optional arguments to connect() are a path to use for sockets (pass nil to use t
 	    end
 	end
 
-###Call a procedure //调用一个程序
+#### Call a procedure //调用一个程序
 
 	local status = conn:call("network.device", "status", { name = "eth0" })
 	for k, v in pairs(status) do
 	    print("key=" .. k .. " value=" .. tostring(v))
 	end
 
-###Close connection  //关闭连接
+#### Close connection  //关闭连接
 
 	conn:close()
 
-###Namespaces & Procedures
+#### Namespaces & Procedures
 
 As explained earlier, there can be many different daemons (services) registered in ubus. Below you will find a list of the most common projects with namespaces, paths and procedures they provide.
 
-###netifd
+#### netifd
 
 DESIGN document at repo of netifd
 
-###rpcd
+#### rpcd
 
 Project rpcd is set of small plugins providing sets of ubus procedures in separated namespaces. These plugins are not strictly related to any particular software (like netifd or dhcp) so it wasn't worth it to implement them as separated projects.
 
 
-###Example code snippets//代码片断
+#### Example code snippets//代码片断
 
 Check if Link is up using devstatus and Json
 
 	#!/bin/sh
-	
+
 	. /usr/share/libubox/jshn.sh
-	
+
 	WANDEV="$(uci get network.wan.ifname)"
-	
+
 	json_load "$(devstatus $WANDEV)"
-	
+
 	json_get_var var1 speed
 	json_get_var var2 link
-	
+
 	echo "Speed: $var1"
 	echo "Link: $var2"
