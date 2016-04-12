@@ -1,4 +1,11 @@
-1 采用procd和gpio-button-hotplug采样按钮
+---
+title: "一点一滴分析LinkIt™ Smart 7688 按钮操作"
+author: "hnhkj@163.com"
+date: "2016年4月12日"
+output: html_document
+---
+
+1. 采用procd和gpio-button-hotplug采样按钮
 ---------------------------------
 
    在openwrt中如何进行按钮操作，有多中方法。我认为一种方法比较easy。参考1.3。
@@ -9,7 +16,7 @@
  -  编译系统
  - 参考https://wiki.openwrt.org/doc/howto/hardware.button?s[]=button&s[]=hotplug文档进行操作。
  - So easy。
-	
+
 如果采用procd方式，需要创建脚本到 /etc/rc.button/ 目录。每个脚本对应指定的按钮。如果采用gpio-button-hotplug，需要创建脚本到 /etc/hotplug.d/button/00-button，该脚本处理按钮信息。参考openwrt网站信息。
 
 ```
@@ -32,7 +39,7 @@ GPIOs 127-127, platform/gpio-wifi, gpio-wifi:
 gpio-127 (mediatek:orange:wifi) out ?
 ```
 
-	 
+
 3.5.2 脚本 GPIO 控制
   https://wiki.openwrt.org/doc/howto/hardware.button
   https://wiki.openwrt.org/doc/hardware/port.gpio?s[]=kmod&s[]=leds&s[]=gpio
@@ -45,7 +52,7 @@ gpio-127 (mediatek:orange:wifi) out ?
   root@mylinkit:/sys/class/gpio# echo "39">export
   root@mylinkit:/sys/class/gpio# ls
   export       gpio39       gpiochip0    gpiochip127  gpiochip32   gpiochip64   unexport
-  1.1.2 定义GPIO39输出 
+  1.1.2 定义GPIO39输出
   root@mylinkit:/sys/class/gpio# cd gpio39
   root@mylinkit:/sys/devices/10000000.palmbus/10000600.gpio/gpio/gpio39# ls
   active_low  device      direction   edge        subsystem   uevent      value
@@ -64,7 +71,7 @@ gpio-127 (mediatek:orange:wifi) out ?
   1.2.1 导出GPIO
   root@mylinkit:/sys/class/gpio# echo "16">export
   root@mylinkit:/sys/class/gpio# ls
-  export       gpio16       gpiochip0    gpiochip127  gpiochip32   gpiochip64   unexport 
+  export       gpio16       gpiochip0    gpiochip127  gpiochip32   gpiochip64   unexport
   root@mylinkit:/sys/class/gpio# cd gpio16
   root@mylinkit:/sys/devices/10000000.palmbus/10000600.gpio/gpio/gpio16# ls
   active_low  device      direction   edge        subsystem   uevent      value
