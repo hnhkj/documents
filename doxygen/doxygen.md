@@ -7,7 +7,7 @@ output: html_document
 
 
 ## 工具下载及安装
-
+n
 * Doxygen可以从一套源文件开始，生成HTML格式的在线类浏览器。笔者采用的版本是 Doxygen1.8.9.1
 
 * Microsoft HTML Help Workshop是微软开发，用于本工程创建*.chm文件，笔者上官网下载最新的 htmlhelp
@@ -245,11 +245,30 @@ output: html_document
 
 Starts a paragraph where a message that needs attention may be entered. The paragraph will be indented. The text of the paragraph has no special internal structure. All visual enhancement commands may be used inside the paragraph. Multiple adjacent \attention commands will be joined into a single paragraph. The \attention command ends when a blank line or some other sectioning command is encountered.
 
-#### \warning { warning message } 警告消息
+#### \exception <exception-object> {exception description} 对一个异常对象进行注释。
+
+#### \warning { warning message } 警告消息（一些需要注意的事情）
 
 Starts a paragraph where one or more warning messages may be entered. The paragraph will be indented. The text of the paragraph has no special internal structure. All visual enhancement commands may be used inside the paragraph. Multiple adjacent \warning commands will be joined into a single paragraph. Each warning description will start on a new line. Alternatively, one \warning command may mention several warnings. The \warning command ends when a blank line or some other sectioning command is encountered. See section \author for an example.
 
+#### \todo { things to be done } 对将要做的事情进行注释
 
+#### \see {comment with reference to other items } 一段包含其他部分引用的注释，中间包含对其他代码项的名称，自动产生对其的引用链接。
+
+
+#### \relates <name> 通常用做把非成员函数的注释文档包含在类的说明文档中。
+
+#### \since {text} 通常用来说明从什么版本、时间写此部分代码。
+
+#### \deprecated
+
+#### \pre { description of the precondition } 用来说明代码项的前提条件。
+
+#### \post { description of the postcondition } 用来说明代码项之后的使用条件。
+
+#### \code 在注释中开始说明一段代码，直到@endcode命令。
+
+#### \@endcode 注释中代码段的结束。
 
 ## 参考文档
 
