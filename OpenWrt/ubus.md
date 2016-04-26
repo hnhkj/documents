@@ -198,6 +198,8 @@ While logged into via ssh, you have direct, full access to ubus. When you're acc
 
 An example of a complicated ACL, allowing quite fine grained access to different ubus modules and methods is available in the Luci2 project
 
+一个复杂的ACL例子，允许非常好的grained访问不同的的ubus模组合方法，他在luci2项目中是有效的。
+
 An example of a "security is for suckers" config, where a "superuser" ACL group is defined, allowing unrestricted access to everything, is shown below. (This illustrates the usage of '*' definitions in the ACLs, but keep reading for better examples) Placing this file in /usr/share/rpcd/acl.d/superuser.json will help you move forward to the next steps.
 
 	{
