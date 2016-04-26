@@ -1,0 +1,3 @@
+Error[149]   C:\WINDOWS\DESKTOP\KEELOG\KLQ_DEMO\SECSYS\SECSYS14.ASM 147 : Directive only allowed when generating an object file
+Error[113]   C:\WINDOWS\DESKTOP\KEELOG\KLQ_DEMO\SECSYS\SECSYS14.ASM 1745 : Symbol not previously defined (CODE)
+Error[113]   C:\WINDOWS\DESKTOP\KEELOG\KLQ_DEMO\SECSYS\SECSYS14.ASM 1784 : Symbol not previously defined (CODE)

@@ -1,0 +1,1641 @@
+;------------------------------------------------------------------------------
+;  MICROCHIP KEELOQ CODE HOPPING DECODER - SECURE LEARN
+;
+;------------------------------------------------------------------------------
+;  LEGAL NOTICE
+;
+;  The information contained in this document is proprietary and 
+;  confidential information of Microchip Technology Inc.  Therefore all 
+;  parties are required to sign a non-disclosure agreement before 
+;  receiving this document.
+;------------------------------------------------------------------------------
+
+;------------------------------------------------------------------------------
+;
+;PROGRAM INFORMATION:	
+;	FILE:	MCSLRN09.ASM
+;	DATE:	JULY 1996
+;	VER.:	0.9
+;	FUSES:  OSC=RC,WDT=ON,CP=ON
+;	ASM.:	MPASM VERSION 1.30.01 USED.
+;	INCL:	NONE
+;	EDITOR:	TAB SPACES = 8, RIGHT MARGIN = 80
+;
+;CONFIGURATION CONTROL: 
+;  -FIRST VERSION: 27 JULY 1996, S.G. DAWSON
+;	1.  ADAPTED FROM MCDEC14A.ASM TO USE SECURE LEARN INSTEAD OF 
+;	    THE KEELOQ DECRYPTION ROUTINE TO GENERATE DECRYPTION KEYS.
+;	2.  RECEPTION ROUTINE NOW AN INCLUDE FILE TO ALLOW THE RECEIVE 
+;	    ROUTINE TO KEPT CURRENT MORE EASILY.  FILE RECEIVE0.ASM.
+;	    THE RECEPTION ROUTINE NOW RECEIVES 66 BITS, THE MS 2 BITS
+;	    ARE IGNORED AND CSR8 IS DISCARDED AFTER RECEPTION HAS BEEN
+;           COMPLETED.
+;	3.  DISCRIMINATION VALUE MUST NOW BE THE LS 8 BITS OF THE SERIAL 
+;	    NUMBER.
+;
+;------------------------------------------------------------------------------
+
+  LIST P=16C56,F=INHX8M,R=DEC
+  ERRORLEVEL 0,-305,-306  ; Messages, Warnings and Errors Printed
+                          ; Ignore [305] => Using default dest of
+                          ; 1 file
+                          ; Ignore [306] => Crossing Page Boundary
+
+;------------------------------------------------------------------------------
+; GENERAL PURPOSE REGISTERS
+;------------------------------------------------------------------------------
+
+IND	EQU	00H		; INDIRECT ADDRESS REGISTER
+TIMER0	EQU	01H		; REAL TIME COUNTER CLOCK
+PC	EQU	02H		; PROGRAM COUNTER
+STATUS	EQU	03H             ; STATUS REGISTER
+FSR	EQU	04H		; FILE SELECT REGISTER
+PORTA	EQU	05H		; PORT A
+PORTB	EQU	06H		; PORT B
+
+;------------------------------------------------------------------------------
+; USER DEFINED REGISTER
+;------------------------------------------------------------------------------
+
+FLAGS	EQU	07H		; USER FLAG REGISTER
+ADDRESS	EQU	08H		; ADDRESS REGISTER
+TXNUM	EQU	09H		; CURRENT TX
+OUTBYT	EQU	0AH		; GENERAL DATA REGISTER
+MASK	EQU	OUTBYT		; MASK REGISTER USED IN DECRYPTION
+
+; COUNTER REGISTERS
+
+CNT0    EQU     0BH		; LOOP COUNTERS
+CNT1    EQU	0CH		
+CNT2    EQU     0DH		
+
+CNT_HI	EQU	0EH		; 16 BIT CLOCK COUNTER
+CNT_LW	EQU	0FH		
+
+TMP_CNT	EQU	10H
+
+; TEMP REGISTERS
+
+TMP1	EQU	TMP_CNT		; TEMP REGISTERS
+TMP2	EQU	11H
+TMP3	EQU	12H
+TMP4	EQU	13H
+
+; CIRCULAR BUFFER REGISTER
+
+CSR4    EQU     14H            	; 64 BIT RECEIVE SHIFT REGISTER
+CSR5    EQU     15H            
+CSR6    EQU     16H            
+CSR7    EQU     17H            
+
+CSR0    EQU     18H            	
+CSR1    EQU     19H            
+CSR2    EQU     1AH            
+CSR3    EQU     1BH            
+CSR8	EQU	TMP2		; CONTAINS MS BITS OF THE RECEIVE ROUTINE
+
+
+; WORK REGISTERS
+
+OLD_BUT	EQU	1CH		; STORE PREVIOUS BUTTON CODE
+RAM_HI	EQU	1DH		; 16 BIT RAM COUNTER ( USED IN RESYNC )
+RAM_LW	EQU	1EH
+SREG	EQU	1FH		; PROGRAM STATE INDICATOR REGISTER
+
+;------------------------------------------------------------------------------
+; USER REGISTER RE-MAPPINGS
+;------------------------------------------------------------------------------
+
+; **************  DECRYPTION REGISTER RE-MAPPINGS *******************
+;
+; NOTE : INDIRECT ADDRESSING USED, DO NOT CHANGE REGISTER ASSIGNMENT 
+;
+; ******************************************************************
+KEY0	EQU	TMP2		; 64BIT SHFT REGISTER WITH DECRYPTION KEY
+KEY1	EQU	TMP1
+KEY2	EQU	TMP3
+KEY3	EQU	TMP4
+KEY4	EQU	CSR4
+KEY5	EQU	CSR5
+KEY6	EQU	CSR6
+KEY7	EQU	CSR7
+
+HOP1	EQU	CSR0		; 32 BIT HOPCODE REGISTER
+HOP2	EQU	CSR1
+HOP3	EQU	CSR2
+HOP4	EQU	CSR3
+
+; RECEIVED TRANSMISSION OPEN 32 BITS 
+
+SER_0	EQU	CSR7		; 24/28 BIT SERIAL NUMBER
+SER_1	EQU	CSR6
+SER_2	EQU	CSR5
+SER_3	EQU	CSR4
+
+; RECEIVED TRANSMISSION ENCRYPTED 32 BITS 
+
+FUNC	EQU	CSR3		; BUTTON CODE & USER BIT FUNCTION BYTE
+CODE	EQU	CSR2		; DISCRIMINATION VALUE
+CNTR_HI	EQU	CSR1		; 16 BIT RX COUNTER
+CNTR_LW	EQU	CSR0
+
+
+;------------------------------------------------------------------------------
+; PORT AND FLAG BIT DEFINITIONS
+;------------------------------------------------------------------------------
+
+; PORTA BIT DEFINITIONS
+
+RES0	EQU	0H		; RESERVED
+RFIN	EQU	1H		; RF INPUT
+LEARN	EQU	2H		; LEARN BUTTON
+LED	EQU	3H		; LEARN INDICATOR LED OUTPUT
+
+; PORTB BIT DEFINITIONS
+
+S0	EQU	0H		; S0 OUTPUT
+S1	EQU	1H		; S1 OUTPUT
+S2	EQU	2H		; S2 OUTPUT
+S3	EQU	3H		; S3 OUTPUT
+DIO	EQU	4H		; EEPROM DATA LINE
+CLK	EQU	5H		; EEPROM SERIAL CLOCK
+CS	EQU	6H		; EEPROM CHIP SELECT
+B_LRN	EQU	7H		; INDICATE FUNCTION LEARNT WAS RECEIVED
+
+; ENCODER FLAGS DEFINITIONS
+BITIN	EQU	0H		; RESERVED 
+FLAG1	EQU	1H		; RESERVED
+FLAG2	EQU	2H		; RESERVED 
+FLAG3	EQU	3H		; RESERVED
+TCHECK	EQU	4H		; INDICATE ONLY 16 BIT COUNTER UPDATE
+NTQ106	EQU	5H		; INDICATE MICROCHIP HCS TX RECEIVED
+RESYNC	EQU	6H		; RESYNCH ACTIVE BIT
+OUT_500	EQU	7H		; INDICATE BUSY WITH 500MS TIMEOUT ON 
+				; OUTPUT
+
+; STATUS REGISTER BIT DEFINITIONS
+C       EQU       0		; CARRY
+DC      EQU       1		; DIGIT CARRY
+Z       EQU       2		; ZERO
+PD      EQU       3		; POWER DOWN
+TO      EQU       4		; TIMEOUT
+PA0     EQU       5		; PAGE SELECT [0 OR 1]
+PA1     EQU       6		; NOT USED IN PIC16C54, 16C56
+OVF     EQU       7		; TIMER0 OVERFLOW
+
+;------------------------------------------------------------------------------
+; COMPILER DEFINES
+;------------------------------------------------------------------------------
+MAX     EQU     10800 		; TRANSMISSION HEADER MAXIMUM LENGTH [æS]
+TRISA	EQU	0111B		; PORTA: TRI-STATE VALUE
+WRCFG	EQU	00000000B	; PORTB: EEPROM WRITE TRI-STATE VALUE
+RDCFG	EQU	00010000B	; PORTB: EEPROM READ TRI-STATE VALUE
+
+;------------------------------------------------------------------------------
+; MANUFACTURER'S KEY DEFINED
+;------------------------------------------------------------------------------
+MKEY0	EQU	0EFH
+MKEY1	EQU	0CDH
+MKEY2	EQU	0ABH
+MKEY3	EQU	089H
+MKEY4	EQU	067H
+MKEY5	EQU	045H
+MKEY6	EQU	023H
+MKEY7	EQU	001H
+
+;------------------------------------------------------------------------------
+; EEPROM ADDRESS'S DEFINED
+;------------------------------------------------------------------------------
+TMP_HOP	EQU	04H
+
+;------------------------------------------------------------------------------
+; PROGRAM STATES
+;------------------------------------------------------------------------------
+PASS1	EQU	0C9H		; LEARN FIRST PASS
+PASS2	EQU	0CAH 		; LEARN SECOND PASS
+NORMAL	EQU	05CH		; NORMAL PROGRAM FLOW
+BUSY	EQU	0C7H		; INDICATE LEARN STILL BUSY
+
+;------------------------------------------------------------------------------
+; PAGE 0: 
+;------------------------------------------------------------------------------
+	ORG 00H
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION     : RESET ()	      			
+;
+; DESCRIPTION  : PROGRAM RESET ROUTINE
+;
+; PAGE		: 0
+;
+;------------------------------------------------------------------------------
+RESET	
+	MOVLW	000111B			; SETUP TIMER0 PRESCALER
+	OPTION
+
+	CLRF	PORTA			; RESET PORTA
+	CLRF	PORTB			; RESET PORTB
+
+	MOVLW	TRISA			; SETUP PORTA FOR ALL OUTPUT
+	TRIS	PORTA
+	MOVLW	RDCFG			; UPDATE TRIS REGISTER FOR PORTB
+	TRIS 	PORTB
+
+	CLRF	FUNC			; RESET FUNCTION BYTE
+	CLRF	OLD_BUT			; RESET OLD BUTTON CODE
+	CLRF	FLAGS			; RESET FLAGS
+	CLRF	CNTR_HI			; RESET CLOCK COUNTER
+	CLRF	CNTR_LW
+
+	MOVLW	NORMAL			; INDICATE NORMAL PROGRAM FLOW
+	MOVWF	SREG
+
+	BSF	STATUS,PA0		; SELECT PAGE #1
+	GOTO	MAIN			; GOTO MAIN PROGRAM LOOP
+
+;------------------------------------------------------------------------------
+; UPPER PAGE CALLS
+;------------------------------------------------------------------------------
+SENDC	
+	GOTO	SENDC1			; UPPER PAGE CALL TO SENDC
+
+TST_LEARN
+	GOTO	TST_LEARN1		; CALL LEARN BUTTON TEST ROUTINE
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION     	: CHK_TIMER ()	      			
+;
+; DESCRIPTION  	: TEST TIMEMOUT DURING EEPROM ROUTINES
+;
+; PAGE		: 0
+;
+;------------------------------------------------------------------------------
+CHK_TIMER
+	CLRWDT				; RESET WATCHDOG TIMER
+	BTFSS	TIMER0,7			; TEST FOR 32MS EVENT
+	RETLW	0
+	
+	BCF	TIMER0,7			; CLEAR MSB OF TIMER0
+	INCF	CNT_LW			; INCREASE 16 COUNTER
+	SKPNZ
+	INCF	CNT_HI			
+
+	MOVLW	10D			; 10 x 32.7 ms EEPROM ACK TIMEOUT
+	BTFSS	FLAGS,TCHECK		; FIRST TIME FLAG
+	MOVWF	CNT1
+
+    	BSF	FLAGS,TCHECK		; INDICATE NOT FIRST TIME PASS
+	DECFSZ	CNT1			; CHECK FOR EEPROM ACK TIMEOUT
+	RETLW	0
+	GOTO	RESET			; ... EEPROM WAIT TIMEMOUT 
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION     	: ROT_SHIFT ()
+;
+; DESCRIPTION  	: RIGHT ROTATE 72 BIT RECEIVE SHIFT REGISTER
+;
+; PAGE		: 0
+;
+;------------------------------------------------------------------------------
+ROT_SHIFT
+	RRF	CSR8
+        RRF     CSR7
+        RRF     CSR6                     
+        RRF     CSR5                     
+        RRF     CSR4                     
+        RRF     CSR3                     
+        RRF     CSR2                     
+        RRF     CSR1                    
+        RRF     CSR0                    
+	RETLW	0
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION        : NTQ_LP1 ()
+;
+; DESCRIPTION     : WAIT FOR CNT1 TIMES 1 MS
+;			CNT2 = OSC/[4*6*1000]  [ 1MS ]
+;
+; PAGE		: 0
+;
+;------------------------------------------------------------------------------
+NTQ_LP1
+	MOVLW	200D			; DELAY COUNTER FOR 1 MS
+	MOVWF	CNT2
+NTQ_LP2
+	NOP				; [1] WASTE TIME
+	CLRWDT				; [1]
+	DECFSZ	CNT2			; [1]
+	GOTO	NTQ_LP2			; [2]
+
+	DECFSZ	CNT1			; [1]
+	GOTO	NTQ_LP1			; [2]
+	RETLW	0
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION     	: ROTR()	      			
+;
+; DESCRIPTION  	: ROTATE 16 BIT SHIFT REGISTER RIGHT
+;
+; PAGE		: 0
+;
+;------------------------------------------------------------------------------
+ROTR
+        RRF     TMP1
+        RRF     TMP2
+        BCF     TMP1,7
+        SKPNC
+        BSF     TMP1,7
+        RETLW   0
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION     	: ROTL()	      			
+;
+; DESCRIPTION  	: ROTATE 16 BIT SHIFT REGISTER LEFT
+;
+; PAGE		: 0
+;
+;------------------------------------------------------------------------------
+ROTL
+        RLF     TMP2
+        RLF     TMP1
+        BCF     TMP2,0
+        SKPNC
+        BSF     TMP2,0
+        RETLW   0
+
+;------------------------------------------------------------------------------
+; Memory Map ROM Keys
+;------------------------------------------------------------------------------
+	ORG	40H
+KEY_LOOKUP
+	ADDWF	PC,1			; ADD OFFSET TO PROGRAM COUNTER
+
+KEYBASE	EQU	$
+EN_KEY	EQU	$			; ENVELOPE KEY BASE ADDRESS
+	RETLW	0FFH			; EN_KEY_0 LSB
+	RETLW	0FFH			; EN_KEY_1 MSB
+
+EE_KEY	EQU	$			; EEPROM KEY BASE ADDRESS
+	RETLW	088H			; EKEY_0 LSB
+	RETLW	077H			; EKEY_1
+	RETLW	066H			; EKEY_2
+	RETLW	055H			; EKEY_3
+	RETLW	044H			; EKEY_4
+	RETLW	033H			; EKEY_5
+	RETLW	022H			; EKEY_6
+	RETLW	011H			; EKEY_7 MSB
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION     	: TST_RTCC ()
+;
+; DESCRIPTION  	: TEST TIMER0 COUNTER AND UPDATE OUTPUT IF REQUIRED
+;
+; PAGE		: 0
+;
+;------------------------------------------------------------------------------
+TST_RTCC
+	CLRWDT				; RESET WATCHDOG TIMER
+	MOVFW	STATUS
+	XORWF	TIMER0,W
+	ANDLW	080H
+
+	BTFSS	STATUS,Z
+	GOTO	TST_RTCC_2		; TEST FOR 32MS TIMEOUT
+	RETLW	0H			; QUICK RETURN TO RECEIVE ROUTINE
+
+; **** INCREASE 16 BIT CLOCK TIMER *******
+TST_RTCC_2
+	BCF	STATUS,OVF
+	MOVFW	TIMER0
+	ANDLW	080H
+	IORWF	STATUS
+
+	INCF	CNT_LW			; INCREASE 16 COUNTER
+	BTFSC	STATUS,Z		; INCR MS BYTE IF ZERO (OVERFLOW)
+	INCF	CNT_HI
+
+	MOVLW	TRISA			; UPDATE TRIS REGISTER FOR PORTA
+	TRIS 	PORTA
+	MOVLW	RDCFG			; UPDATE TRIS REGISTER FOR PORTB
+	TRIS 	PORTB
+
+	BTFSS	TIMER0,7		; TEST FOR 32MS TIMEOUT
+	RETLW	0H			; QUICK RETURN TO RECEIVE ROUTINE
+
+
+; *********** UPDATE LED IF REQUIRED ********
+TST_LED
+	MOVLW	PASS1			; TEST IF IN 1ST PASS OF SELFLEARN
+	XORWF	SREG,W
+	SKPZ				; ... IF NOT BYPASS
+	GOTO	TST_500
+	BSF	PORTA,LED		; INDICATE 1ST VALID TX RECEIVED
+
+; ***** TEST FOR 500 MS TIMEMOUT ON OUTPUTS **********
+TST_500
+	BTFSS	CNT_LW,4		; TEST FOR 500 MS TIMEOUT
+	GOTO	TST_30			; ... IF NOT TEST 30S TIMEOUT
+
+	BCF	FLAGS,OUT_500		; RESET 500 MS OUTPUT INICATION
+	BCF	PORTB,B_LRN		; RESET LEARN BUTTON CODE
+	MOVLW	0F0H
+	ANDWF	PORTB,1			; DOWN ALL PULSE OUTPUTS 
+	CLRF	OLD_BUT
+
+ ; ********* TEST FOR 30 S LEARN TIMEOUT *************
+TST_30	
+	MOVLW	NORMAL			; TIMEOUT USE ONLY WITH LEARN
+	XORWF	SREG,W
+	SKPNZ
+	GOTO	TST_END			; ... IF NOT RETURN 
+
+	BTFSC	CNT_HI,2		; TEST FOR LEARN TIMEOUT
+	GOTO	RESET			; IF TIMEMOUT FORCE SOFT RESET
+
+TST_END	
+	RETLW	0H
+
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION     	: DECRYPT ()	      			
+;
+; DESCRIPTION  	: DECRYPTS 32 BIT [HOP1:HOP4] USING [CSR0:CSR7]
+;
+; PAGE		: 0 ( NOTE : MUST BE LOWER HALF OF PAGE )
+;
+;------------------------------------------------------------------------------
+DECRYPT
+        MOVLW   11+1            ; OUTER LOOP 11+1 TIMES 
+        MOVWF   CNT1          	; OUTER LOOP 11+1 TIMES 
+
+DECRYPT_OUTER
+        MOVLW   48              ; INNER LOOP 48 TIMES
+        MOVWF   CNT0          	; INNER LOOP 48 TIMES
+
+DECRYPT_INNER
+	CLRWDT			; RESET WATCHDOG TIMER
+        MOVFW   CNT1		; LAST 48 LOOPS RESTORE THE KEY
+        XORLW   1               ; LAST 48 LOOPS RESTORE THE KEY
+        SKPNZ                   ; LAST 48 LOOPS RESTORE THE KEY
+        GOTO    ROTATE_KEY      ; LAST 48 LOOPS RESTORE THE KEY
+
+        ; THE LOOKUP TABLE IS COMPRESSED INTO IN 4 BYTES TO SAVE SPACE
+        ; USE THE 3 LOW INDEX BITS TO MAKE UP AN 8-BIT BIT MASK
+        ; USE THE 2 HIGH INDEX BITS TO LOOK UP THE VALUE IN THE TABLE
+        ; USE THE BIT MASK TO ISOLATE THE CORRECT BIT IN THE BYTE
+        ; PART OF THE REASON FOR THIS SCHEME IS BECAUSE NORMAL TABLE 
+        ; LOOKUP REQUIRES AN ADDITIONAL STACK LEVEL
+							
+        CLRC                    ; CLEAR CARRY (FOR THE LEFT SHIFT)
+       
+        MOVLW   1               ; INITIALISE MASK = 1
+        BTFSC   HOP3,3       	; SHIFT MASK 4X IF BIT 2 SET
+        MOVLW   10000B          ; SHIFT MASK 4X IF BIT 2 SET
+        MOVWF   MASK            ; INITIALISE MASK = 1
+
+        BTFSS   HOP2,0       	; SHIFT MASK ANOTHER 2X IF BIT 1 SET
+        GOTO    $+3
+        RLF     MASK
+        RLF     MASK            
+
+        BTFSC   HOP1,0       	; SHIFT MASK ANOTHER 1X IF BIT 0 SET
+        RLF     MASK
+
+        ; MASK HAS NOW BEEN SHIFTED 0-7 TIMES ACCORDING TO BITS 2:1:0
+
+        MOVLW   0               ; TABLE INDEX = 0
+        BTFSC   HOP4,1
+        IORLW   2               ; IF BIT 3 SET ADD 2 TO THE TABLE INDEX
+        BTFSC   HOP4,6
+        IORLW   4               ; IF BIT 4 SET ADD 4 TO THE TABLE INDEX
+
+        ADDWF   PC              ; ADD THE INDEX TO THE PROGRAM COUNTER
+				;  [ MUST BE IN LOWER HALF OF PAGE ]
+                               
+TABLE
+        MOVLW   02EH            ; BITS 4:3 WERE 00
+        GOTO    TABLE_END       ; END OF LOOKUP
+
+        MOVLW   074H            ; BITS 4:3 WERE 01
+        GOTO    TABLE_END       ; END OF LOOKUP
+
+        MOVLW   05CH            ; BITS 4:3 WERE 10
+        GOTO    TABLE_END       ; END OF LOOKUP
+
+        MOVLW   03AH            ; BITS 4:3 WERE 11
+                                 
+TABLE_END
+        ANDWF   MASK            ; ISOLATE THE CORRECT BIT
+        MOVLW   0               ; COPY THE BIT TO BIT 7
+        SKPZ                    ; COPY THE BIT TO BIT 7
+        MOVLW   10000000B       ; COPY THE BIT TO BIT 7
+
+        XORWF   HOP2,W    	; ONLY INTERESTED IN BIT HOP2,7
+        XORWF   HOP4,W    	; ONLY INTERESTED IN BIT HOP4,7
+        XORWF   KEY1,W		; ONLY INTERESTED IN BIT KEYREG1,7
+
+        MOVWF   MASK            ; STORE W TEMPORARILY (WE NEED BIT 7)
+        RLF     MASK            ; LEFT ROTATE MASK TO GET BIT 7 INTO CARRY
+
+        RLF     HOP1         	; SHIFT IN THE NEW BIT
+        RLF     HOP2
+        RLF     HOP3
+        RLF     HOP4
+
+ROTATE_KEY
+        CLRC			; CLEAR CARRY
+        BTFSC   KEY7,7       	; SET CARRY IF LEFTMOST BIT SET
+        SETC                    ; SET CARRY IF LEFTMOST BIT SET
+
+        RLF     KEY0         	; LEFT-ROTATE THE 64-BIT KEY 
+        RLF     KEY1
+        RLF     KEY2
+        RLF     KEY3
+        RLF     KEY4
+        RLF     KEY5
+        RLF     KEY6
+        RLF     KEY7         
+	
+
+        DECFSZ  CNT0          	; INNER LOOP 48 TIMES
+        GOTO    DECRYPT_INNER   ; INNER LOOP 48 TIMES
+
+        DECFSZ  CNT1          	; OUTER LOOP 12 TIMES (11+1 TO RESTORE KEY)
+        GOTO    DECRYPT_OUTER   ; OUTER LOOP 12 TIMES (11+1 TO RESTORE KEY)
+
+        RETLW   0               ; RETURN 
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION	: RECEIVE ()
+;
+; DESCRPTION	: RECEIVE 66 BITS FROM ENCODER
+;
+; PAGE		: 0
+;
+;------------------------------------------------------------------------------
+#INCLUDE "RECEIVE0.ASM"
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION     	: TST_LEARN ()	      			
+;
+; DESCRIPTION  	: TEST AND HANDLE LEARN BUTTON
+;
+; PAGE		: 0
+;
+;------------------------------------------------------------------------------
+TST_LEARN1
+	CLRWDT				; RESET WATCHDOG TIMER
+	BTFSC	PORTA,LEARN		; CHECK FOR LEARN BUTTON PRESSED
+	RETLW	0			; ... IF NOT RETURN
+	
+	CLRF	CNT_HI			; RESET EVENT COUNTER 
+	CLRF	CNT_LW
+
+TST_LEARN2
+	CALL	TST_RTCC		; CALL RTCC UPDATE ROUTINE
+
+	BTFSS	CNT_HI,0		; TEST FOR ERASE TIMEMOUT,8.2 SEC
+	GOTO	TST_LEARN3		; IF NOT WAIT FOR LEARN KEY LIFT
+
+	BSF	STATUS,PA0		; SELECT PAGE #1
+	GOTO	NTQ_ERASE		; ERASE ALL LEARNED TRANSMITTERS
+
+TST_LEARN3
+	BSF	PORTA,LED		; LED ON TO INDICATE LEARN 
+
+	BTFSS	PORTA,LEARN		; WAIT FOR LEARN BUTTON LIFT
+	GOTO	TST_LEARN2		; ... IF NOT CHECK TIMER
+
+	MOVLW	2H			; TEST IF LEARN PRESS > THAN 64 MS
+	SUBWF	CNT_LW,W					       
+	SKPC
+	RETLW	0			; ... IF NOT ABORT LEARN
+
+	MOVLW	PASS1			; INDICATE FIRST STATE OF LEARN
+	MOVWF	SREG
+	RETLW	0H
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION     	: SENDC ()	      			
+;
+; DESCRIPTION  	: SEND EEPROM COMMAND 
+;
+; PAGE		: 0
+;
+;------------------------------------------------------------------------------
+SENDC1
+	CLRWDT				; RESET WATCHDOG TIMER
+
+        BCF     PORTB,CS                ; RESET CS STATE
+        BCF     PORTB,CLK               ; RESET CLK STATE
+        BCF     PORTB,DIO               ; RESET DIO STATE
+
+        MOVLW   WRCFG
+        TRIS    PORTB                   ; DIO = OUTPUT
+        GOTO    $+1                     ; WAIT FOR OUTPUTS TO SETTLE
+        BSF     PORTB,CS                ; SELECT EEPROM
+        SETC                            ; START BIT = 1
+        MOVLW   9D                 	; START BIT + 8 DATA BITS
+	MOVWF	CNT1
+
+SENDC2
+        SKPC                            ; TEST BIT
+        BCF     PORTB,DIO               ; WRITE TO DIO
+        SKPNC                           ; TEST BIT
+        BSF     PORTB,DIO               ; WRITE TO DIO
+        GOTO    $+1                     ; WAIT 2 US
+        RLF     OUTBYT                  ; GET NEXT BIT INTO CARRY
+        BSF     PORTB,CLK               ; CLOCK HIGH
+        GOTO    $+1                     ; WAIT 2 US
+        GOTO    $+1                     ; WAIT 2 US
+        BCF     PORTB,CLK               ; CLOCK LOW
+	DECFSZ	CNT1			; LOOP COUNTER
+        GOTO	SENDC2
+        BCF     PORTB,DIO               ; AVOID CONTENTION WITH READ
+        RETLW   0
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION     	: EEWRITE ()	      			
+;
+; DESCRIPTION  	: ENCRYPT AND WRITE 16 BIT VALUE TO EEPROM 
+;
+; PAGE		: 0
+;
+;------------------------------------------------------------------------------
+EEWRITE
+; ****** ENCRYPT 16-BIT WORD TO WRITE TO EEPROM ***************
+
+FNC
+        MOVLW   16D                	; 16 DATA BITS TO ENCRYPT
+	MOVWF	CNT1
+
+FNC2
+	MOVLW   07H			; MASK ONLY LOWER 3 BITS
+        ANDWF   TMP1,W
+	MOVWF	OUTBYT			; TEMPORY STORE RESULT
+	MOVLW	(EE_KEY-KEYBASE)	; GET BASE ADDRES OF EEPROM KEY
+	ADDWF	OUTBYT,W		; ... AND ADD TO RESULT
+        CALL    KEY_LOOKUP		; GET BYTE FROM KEY LOOKUP TABLE
+        XORWF   TMP2			 
+        CALL    ROTR                    ; ROTATE RIGHT 16 BIT WORD
+	DECFSZ	CNT1
+	GOTO	FNC2
+
+; ******* EEPROM WRITE ENABLE ******************
+
+WRITE0  
+	MOVLW	30H			; WRITE ENABLE COMMAND
+	MOVWF   OUTBYT               	
+        CALL    SENDC			; SEND COMMAND TO EEPROM
+        BCF     PORTB,CS                ; END COMMAND, DESELECT
+
+; ******** WRITE 16-BIT WORD TO EEPROM *********
+
+WRITE1  
+	MOVFW   ADDRESS			; GET EEPROM ADDRESS
+	MOVWF	OUTBYT
+        BSF     OUTBYT,6		; WRITE COMMAND
+        CALL    SENDC                   ; SEND COMMAND TO EEPROM
+
+	MOVLW	16D			; 16 DATA BITS
+        MOVWF   CNT1	                
+
+WRITE2
+        BTFSS   TMP1,7			; TEST MSB OF 16 BIT WORD
+        BCF     PORTB,DIO		; CLEAR DATA BIT
+        BTFSC   TMP1,7			; ... ELSE 
+        BSF     PORTB,DIO               ; SET DATA BIT
+        GOTO    $+1                     ; WAIT 2 US
+        RLF     TMP2                    ; SHIFT LO BYTE
+        BSF     PORTB,CLK               ; CLOCK HIGH
+        GOTO    $+1                     ; WAIT 2 US
+        RLF     TMP1                    ; SHIFT HI BYTE
+        BCF     PORTB,CLK               ; CLOCK LOW
+	DECFSZ	CNT1
+        GOTO	WRITE2             	; LOOP COUNTER
+        BCF     PORTB,CS                ; END OF WRITE COMMAND, DESELECT
+
+        MOVLW   RDCFG
+        TRIS    PORTB                   ; DIO = INPUT
+        BSF     PORTB,CS                ; CS HIGH TO WAIT FOR ACK
+
+WRITE5  
+	CALL	CHK_TIMER
+	BTFSS	PORTB,DIO		; CHECK FOR ACK
+	GOTO	WRITE5
+
+WRITE6  
+	BCF     PORTB,CS                ; END OF ACK
+
+; ******* EEPROM WRITE DISABLE ****************
+        MOVLW   000H             	; WRITE DISABLE COMMAND
+	MOVWF	OUTBYT
+        CALL    SENDC
+        BCF     PORTB,CS                ; END OF DISABLE COMMAND, DESELECT
+
+	INCF	ADDRESS			; POINT TO NEXT EE ADDR (DEFAULT)
+	BSF	STATUS,PA0		; RE-SELECT PAGE #1
+	RETLW	0H
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION     	: EEREAD ()	      			
+;
+; DESCRIPTION  	: READ 16 BIT VALUE FROM EEPROM AND DECRYPT
+;
+; PAGE		: 0
+;
+;------------------------------------------------------------------------------
+EEREAD
+        MOVFW   ADDRESS
+        MOVWF	OUTBYT
+        BSF     OUTBYT,7                ; COMMAND = READ
+        CALL    SENDC                   ; SEND COMMAND
+        MOVLW   RDCFG
+        TRIS    PORTB                   ; DIO = INPUT
+	MOVLW   16D                	; 16 BITS TO READ
+	MOVWF	CNT1
+
+READ0   
+	BSF     PORTB,CLK               ; CLOCK HIGH
+        RLF     TMP2                    ; SHIFT LO BYTE
+        BCF     TMP2,0                  ; ASSUME BIT WILL BE 0
+        BTFSC   PORTB,DIO               ; READ DIO LINE
+        BSF     TMP2,0                  ; COPY BIT TO REGISTER
+        BCF     PORTB,CLK               ; CLOCK LOW
+        RLF     TMP1                    ; SHIFT HI BYTE
+        DECFSZ  CNT1			; LOOP COUNTER
+	GOTO	READ0
+        BCF     PORTB,CS                ; END READ CYCLE
+
+; ******* DECRYPT 16-BIT WORD READ FROM EEPROM ***************
+
+IFNC    
+	MOVLW   16D
+	MOVWF	CNT1
+
+IFNC1   
+	CALL    ROTL
+	MOVLW	07H			; MASK ONLY LOWER 3 BITS
+        ANDWF   TMP1,W
+	MOVWF	OUTBYT			; TEMPORY STORE RESULT
+	MOVLW	(EE_KEY-KEYBASE)	; GET BASE ADDRES OF EEPROM KEY
+	ADDWF	OUTBYT,W		; ... AND ADD TO RESULT
+	CALL    KEY_LOOKUP		; KEY BYTE FROM KEY LOOKUP TABLE
+        XORWF   TMP2
+	DECFSZ	CNT1	
+        GOTO	IFNC1
+
+	BSF	STATUS,PA0		; RE-SELECT PAGE #1
+	RETLW	0H
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION     	: LEARN_OK ()
+;
+; DESCRIPTION  	: FLASH LED FOR 3 SEC [ INDICATE LEARN SUCCESSFUL ]
+;
+; PAGE		: 0
+;
+;------------------------------------------------------------------------------
+LEARN_OK
+	CLRF	CNT_HI			; RESET EVENT COUNTER		
+	CLRF	CNT_LW
+
+LEARN_OK2
+	CLRWDT				; RESET WATCHDOG TIMER
+	BTFSS	TIMER0,7			; TEST FOR 32MS TIMEOUT
+	GOTO	LEARN_OK2		; ... IF NOT WAIT
+
+	BCF	TIMER0,7			; RESET TIMER0 CLOCK
+	INCF	CNT_LW			; INCREASE 16 COUNTER
+	BTFSC	STATUS,Z		; INCREASE UPPER BYTE IF ZERO
+	INCF	CNT_HI
+
+	BTFSS	CNT_LW,2
+	BCF	PORTA,LED 		; FLASH LED @ 4HZ
+	BTFSC	CNT_LW,2		
+	BSF	PORTA,LED
+
+	BTFSS	CNT_LW,7		; WAIT FOR 3 SEC
+	GOTO	LEARN_OK2
+	GOTO	RESET			; RESET SYSTEM
+
+;------------------------------------------------------------------------------
+; PAGE 1:
+;------------------------------------------------------------------------------
+	ORG	200H
+
+
+;------------------------------------------------------------------------------
+; CALLS TO FIRST PAGE
+;------------------------------------------------------------------------------
+
+RESET1	
+	BCF	STATUS,PA0		; SELECT PAGE #0
+	GOTO	RESET			; GOTO RESET
+
+EE_READ1
+	BCF	STATUS,PA0		; SELECT PAGE #0
+	GOTO	EEREAD			; CALL EEPROM READ ROUTINE
+
+EE_CLEAR1
+	CLRF	TMP1			; CLEAR UPPER 16 BITS
+	CLRF	TMP2			; ... AND THEN WRITE TO EEPROM
+
+EE_WRITE1
+	BCF	STATUS,PA0		; SELECT PAGE #0
+	GOTO	EEWRITE			; CALL EEPROM WRITE ROUTINE
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION     	: CHK_PASS2 ()
+;
+; DESCRIPTION  	: CHECK FOR PASS2 VALUE IN SREG
+;
+; PAGE		: 1
+;
+;------------------------------------------------------------------------------
+CHK_PASS2
+	MOVLW	PASS2			; TEST IF ON 2ND PASS OF SELFLEARN
+	XORWF	SREG,W			; ZERO BIT WILL BE SET 
+	RETLW	0
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION     	: WIPE_TX ()
+;
+; DESCRIPTION  	: WIPE CURRENT TX SERIAL NUMBER IN EEPROM
+;
+; PAGE		: 1
+;
+;------------------------------------------------------------------------------
+WIPE_TX
+	CLRF	TMP1			; SET TO ZERO
+	CLRF	TMP2
+
+	CALL	TX_LOOKUP		; TO GET BASR ADDRESS OF TX
+	BSF	ADDRESS,1		; ADD 2 TO BASE ADDRESS
+
+	CALL	EE_CLEAR1		; CLEAR LOWER 16 BITS
+	CALL	EE_CLEAR1		; CLEAR UPPER 16 BITS
+					; ... DO 1SEC ERROR LED NEXT
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION     	: ERROR_LED ()
+;
+; DESCRIPTION  	: LED ON FOR 1 SEC [ INDICATE ERROR ]
+;
+; PAGE		: 1
+;
+;------------------------------------------------------------------------------
+ERROR_LED
+	CLRF	CNT_HI			
+	CLRF	CNT_LW
+
+ERROR_LED2
+	CLRWDT				; RESET WATCHDOG TIMER
+	BTFSS	TIMER0,7			; TEST FOR 32MS TIMEOUT 
+	GOTO	ERROR_LED2		; ... ELSE WAIT
+
+	BCF	TIMER0,7			; RESET EVENT CLOCK
+	INCF	CNT_LW			; INCREASE 16 COUNTER
+	BTFSC	STATUS,Z		; INCREASE UPPER BYTE IF ZERO
+	INCF	CNT_HI			
+
+	BSF	PORTA,LED		; LED ON TO INDICATE ERROR
+
+	BTFSS	CNT_LW,5		; WAIT FOR 1 SEC
+	GOTO	ERROR_LED2
+	GOTO	RESET1			; RESET SYSTEM
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION     	: TX_LOOKUP ()	      			
+;
+; DESCRIPTION  	: TRANSMITTER MEMORY LOOKUP TABLE
+;
+; PAGE		: 1	( NOTE : MUST BE LOWER HALF OF PAGE )
+;
+;------------------------------------------------------------------------------
+TX_LOOKUP
+	CALL	TX_LOOKUP2		; GET VALUE FROM LOOKUP TBLE BELOW
+	MOVWF	ADDRESS			; STORE VALUE IN ADDRESS REGISTER
+	RETLW	0
+
+; ****** LOOKUP TABLE WITH BASE ADDRESS OF TRANSMITTERS ************
+	
+TX_LOOKUP2
+	MOVFW	TXNUM			; GET CURRENT TRANSMITTER
+	ADDWF	PC,1
+	RETLW	10H			; TX0 BASE ADDRESS 
+	RETLW	18H			; TX1 BASE ADDRESS
+	RETLW	20H			; TX2 BASE ADDRESS
+	RETLW	28H			; TX3 BASE ADDRESS
+	RETLW	30H			; TX4 BASE ADDRESS
+	RETLW	38H			; TX5 BASE ADDRESS
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION     	: BUT_LOOKUP ()	      			
+;
+; DESCRIPTION  	: TRANSMITTER BUTTON LOOKUP TABLE
+;
+; PAGE		: 1	( NOTE : MUST BE LOWER HALF OF PAGE )
+;
+;------------------------------------------------------------------------------
+BUT_LOOKUP
+	MOVFW	TXNUM			; GET CURRENT TRANSMITTER
+	ADDWF	PC,1
+	RETLW	02H			; TX0 BUTTON CODE ADDRESS
+	RETLW	03H			; TX1 BUTTON CODE ADDRESS
+	RETLW	08H			; TX2 BUTTON CODE ADDRESS
+	RETLW	09H			; TX3 BUTTON CODE ADDRESS
+	RETLW	0AH			; TX4 BUTTON CODE ADDRESS
+	RETLW	0BH			; TX5 BUTTON CODE ADDRESS
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION 	: CHK_REPT ()
+;
+; DESCRIPTION	: CHECKS WHETHER THE TRANSMISSION RECEIVED IS THE SAME AS THE 
+;		  THE TRANSMISSION RECEIVED DURING THE FIRST PHASE OF LEARN
+;
+; PAGE		: 1
+;
+;------------------------------------------------------------------------------
+CHK_REPT
+	BCF	PORTA,LED		; LED SET BY RECEIVE ROUTINE
+	MOVLW	TMP_HOP
+	MOVWF	ADDRESS
+	CALL	EE_READ1
+
+	MOVF	TMP2,W			; CSR0 COMPARED TO TX RECEIVED IN PASS1
+	XORWF	CSR0,W
+	BTFSS	STATUS,Z		; CHECK IF THE SAME
+	GOTO	CALC_KEY		; GOTO CALC_KEY IF TX DIFERENT
+
+	MOVF	TMP1,W			; CSR1 COMPARED TO TX RECEIVED IN PASS1
+	XORWF	CSR1,W
+	BTFSS	STATUS,Z
+	GOTO	CALC_KEY		; GOTO CALC_KEY IF TX DIFFERENT
+
+	INCF	ADDRESS			; CHECK THE MS 16 BITS OF THE TX
+	CALL	EE_READ1
+
+	MOVF	TMP2,W			; CSR2 COMPARED TO TX RECEIVED IN PASS1
+	XORWF	CSR2,W
+	BTFSS	STATUS,Z		; CHECK IF THE SAME
+	GOTO	CALC_KEY		; GOTO CALC_KEY IF TX DIFERENT
+
+	MOVF	TMP1,W			; CSR3 COMPARED TO TX RECEIVED IN PASS1
+	XORWF	CSR3,W
+	BTFSC	STATUS,Z		
+	GOTO	M_LOOP2			; RETURN IF THE SAME AND WAIT NEXT TX
+	
+;------------------------------------------------------------------------------
+;
+; FUNCTION     	: CALC_KEY ()	      			
+;
+; DESCRIPTION  	: CALCULATE NEW KEY TRANSMISSION RECEIVED
+;
+; PAGE		: 1
+;
+;------------------------------------------------------------------------------
+CALC_KEY
+
+	; GET THE BASE ADDRESS OF THE KEY
+	CALL	TX_LOOKUP
+	BSF	ADDRESS,2		; ADD 4 TO BASE ADDRESS
+
+	; GENERATE THE DECRYPTION KEY AND WRITE IN EEPROM
+	MOVLW	MKEY0			; DECRYPTION KEY0 GENERATED
+	XORWF	CSR0,W
+	MOVWF	TMP2
+	MOVLW	MKEY1			; DECRYPTION KEY1 GENERATED
+	XORWF	CSR1,W	
+	MOVWF	TMP1
+	CALL	EE_WRITE1		; ...AND WRITE TO EEPROM
+
+	MOVLW	MKEY2			; DECRYPTION KEY2 GENERATED
+	XORWF	CSR2,W
+	MOVWF	TMP2
+	MOVLW	MKEY3			; DECRYPTION KEY3 GENERATED
+	XORWF	CSR3,W
+	MOVWF	TMP1
+	CALL	EE_WRITE1		; ...AND WRITE TO EEPROM
+
+	MOVLW	MKEY4			; DECRYPTION KEY4 GENERATED
+	XORWF	CSR4,W
+	MOVWF	TMP2
+	MOVLW	MKEY5			; DECRYPTION KEY5 GENERATED
+	XORWF	CSR5,W
+	MOVWF	TMP1
+	CALL	EE_WRITE1		; ...AND WRITE TO EEPROM
+
+	MOVLW	MKEY6			; DECRYPTION KEY6 GENERATED
+	XORWF	CSR6,W
+	MOVWF	TMP2
+	MOVLW	MKEY7			; DECRYPTION KEY7 GENERATED
+	XORWF	CSR7,W
+	MOVWF	TMP1
+	CALL	EE_WRITE1		; ...AND WRITE TO EEPROM
+
+	MOVLW	TMP_HOP			; READ HOP SAVED IN PASS 1
+	MOVWF	ADDRESS
+
+CALC_KEY2
+	; READ THE LS 32 BITS OF HOP CODE TO CSR0:3 BEFORE DECRYPTING
+	CALL	EE_READ1
+	MOVF	TMP2,W
+	MOVWF	CSR0
+	MOVF	TMP1,W
+	MOVWF	CSR1
+	
+	INCF	ADDRESS
+	CALL	EE_READ1
+	MOVF	TMP2,W
+	MOVWF	CSR2
+	MOVF	TMP1,W
+	MOVWF	CSR3
+
+	GOTO	M_HOP			; DECRYPT HOP CODE AND CHECK
+	
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION     	: NTQ_ERASE ()
+;
+; DESCRIPTION  	: ERASE ALL TRANSMITTERS
+;
+; PAGE		: 1
+;
+;------------------------------------------------------------------------------
+NTQ_ERASE
+	BSF	PORTA,LED		; SET LED ON
+
+	MOVLW	1H			; POINT TO LEARN POINTER ADDRESS
+	MOVWF	ADDRESS
+	CALL	EE_CLEAR1		; NOTE: CURNT PAGE BIT SET TO #0
+
+	CLRF	TXNUM			; POINT TO 1ST TX POSISTION IN EE
+NTQ_ERASE2
+	CALL	TX_LOOKUP		; GET TX BASE ADRESS
+	BSF	ADDRESS,1		; ADD 2 TO BASE ADDRESS
+
+	CALL    EE_CLEAR1	        ; CLEAR LOW 16BITS OF SERIAL NR
+	CALL    EE_CLEAR1 	        ; CLEAR UP 16BITS OF SERIAL NR
+
+	INCF	TXNUM			; POINT TO NEXT EEPROM INDEX
+	MOVLW	6H			; TEST FOR LAST POSITION
+	SUBWF	TXNUM,W
+	SKPC				; IF NOT UPDATE NEXT ENTRY
+	GOTO	NTQ_ERASE2
+	BCF	PORTA,LED		; LED OFF TO IND ERASE ALL COMPLTE
+
+M_ERASE3
+	CLRWDT				; RESET WATCHDOG TIMER
+	MOVLW	TRISA			; UPDATE TRI-STATE REGISTER
+	TRIS	PORTA
+	BTFSS	PORTA,LEARN		; WAIT FOR BUTTON LIFT
+	GOTO	M_ERASE3	 
+	GOTO	MAIN2			; THEN WAIT FOR NEXT TRANMISSION
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION     	: READ_KEY ()	      			
+;
+; DESCRIPTION  	: READ 64 BIT KEY FROM EEPROM [KEY0:KEY7] 
+;
+; PAGE		: 1
+;
+;------------------------------------------------------------------------------
+READ_KEY
+	MOVLW	3H			; POINT TO MSB OF KEY
+	ADDWF	ADDRESS,1	
+
+	MOVLW	KEY7			; POINT TO LSB OF 64 BIT SHFT REG
+	MOVWF	FSR	
+	MOVLW	3H			; READ 3x16BIT VALUES FROM EEPROM
+	MOVWF	CNT2
+
+READ_KEY2
+	CALL	EE_READ1		; READ LOWER 16 BITS
+	MOVFW	TMP1			; GET UPPER 8 BITS
+	MOVWF	IND			; STORE 1ST 8BITS IN 64BT SHFT REG
+	DECF	FSR			; POINT TO NEXT BYTE IN SHFT REG
+	MOVFW	TMP2			; GET LOWER 8 BITS
+	MOVWF	IND			; STORE 2ND 8BITS IN 64BT SHFT REG
+	DECF	FSR			; POINT TO NEXT BYTE IN SHIFT REG
+	DECF	ADDRESS			; POINT TO NEXT EEPROM ADDRESS
+	DECFSZ	CNT2			; ALL THREE 16-BIT WORDS READ
+	GOTO	READ_KEY2		; ... IF NOT GET NEXT 
+
+	CALL	EE_READ1		; READ LOWER 16 BITS
+	GOTO	M_DEC			; RETURN TO MAIN PROGRAM LOOP
+
+;------------------------------------------------------------------------------
+;
+; FUNCTION     	: MAIN ()	      			
+;
+; DESCRIPTION  	: MAIN PROGRAM ROUTINE
+;
+; PAGE		: 1
+;
+;------------------------------------------------------------------------------
+MAIN
+	MOVLW	1H			; POINT LEARN POINTER
+	MOVWF	ADDRESS
+	CALL	EE_READ1		; READ LEARN POINTER WORD
+
+	BTFSC	TMP2,3			; UPR BIT OF SELFLEARN NIBBLE ZERO
+	GOTO	MAIN2			; IF NOT CONTINUE NORMAL PGM FLOW
+	BTFSC	TMP2,7			; UPR BIT OF TXNUM NIBBLE ZERO
+	GOTO	MAIN2			; IF NOT CONTINUE NORMAL PGM FLOW
+
+	MOVLW	BUSY			; TEST IF LEARN PASS1 WAS ACTIVE 
+	XORWF	TMP1,W
+	SKPZ				; IF NOT CONTINUE NORMAL PGM FLOW
+	GOTO	MAIN2
+
+	SWAPF	TMP2,W			; RECOVER PREVIOUS TX NUMBER
+	ANDLW	07H			; MASK ONLY LOWER 3 BITS
+
+	CLRF	TMP1			; RESET SELFLEARN POINTER 
+	MOVWF	TXNUM			; ... TO CURRENT TXNUM
+	MOVWF	TMP2
+
+	MOVLW	PASS2			; SET PGM IN 2ND PASS OF SELFLRN
+	MOVWF	SREG			; .TO ALLOW WRITING OF SER NRS & 
+					; .LEARN POINTER
+
+	MOVLW	1H			; WRITE LEARN POINTER
+	MOVWF	ADDRESS
+	CALL	EE_WRITE1		; UPDATE EEPROM
+	GOTO	WIPE_TX			; WIPE TX (SELFLEARN UNSUCCESFUL)
+
+MAIN2
+	MOVLW	NORMAL			; INDICATE NORMAL PROGRAM FLOW
+	MOVWF	SREG
+
+M_LOOP	
+	BTFSS	SREG,2			; TEST FOR NORMAL STATE
+	GOTO	M_LOOP2
+
+	BTFSS	FLAGS,OUT_500		; TST 500MS TIMEOUT AFTR OUTPUT
+	BCF	PORTA,LED		; SET LED OFF IF NORMAL PGM FLOW
+
+M_LOOP2
+	BCF	STATUS,PA0		; CLEAR PAGE BIT #0
+	CALL	TST_LEARN		; TEST & HANDLE LEARN BUTTON
+	CALL	RECEIVE			; RECEIVE TRANSMISSION 
+	BSF	STATUS,PA0		; SET PAGE BIT #0
+
+	SKPNC				; CHECK IF TRANSMISSION VALID
+	GOTO	M_LOOP			; ... IF NOT WAIT FOR NEXT TX
+
+	MOVLW	0FH			; MAXIMUM SERIAL NUMBER IS 28 BITS
+	ANDWF	SER_0,1
+
+	MOVFW	SER_0			; CHECK SERIAL # NOT EQUAL TO ZERO
+	IORWF	SER_1,W
+	IORWF	SER_2,W
+	IORWF	SER_3,W
+	SKPNZ				; ... IF ZERO WAIT FOR NEXT TX
+	GOTO	M_LOOP
+	
+	MOVLW	PASS2			; TEST IF ON SECOND PASS OF LEARN
+	XORWF	SREG,W
+	SKPNZ				 
+	GOTO	CHK_REPT		; IF SO, GENERATE KEY AND DECRYPT HOP
+
+	CLRF	TXNUM			; .ELSE POINT TO FIRST TX
+
+; ******* COMPARE LOWER WORD OF SERIAL NUMBER ********
+M_SERIAL
+	CALL	TX_LOOKUP		; GET TX BASE ADDRESS
+	BSF	ADDRESS,1		; ADD 2 TO BASE ADDRESS
+	CALL	EE_READ1		; READ LOW 16BITS OF SER # FROM EE
+
+	MOVFW	TMP1			; COMPARE RX AND EEPROM VALUES
+	XORWF	SER_2,W
+	SKPZ				; ... IF NOT EQUAL DO ERROR
+	GOTO	M_NEXT
+
+	MOVFW	TMP2			; COMPARE RX AND EEPROM VALUES
+	XORWF	SER_3,W
+	SKPZ				; ... IF NOT EQUAL DO ERROR
+	GOTO	M_NEXT
+	
+; ******* COMPARE UPPER WORD OF SERIAL NUMBER ********
+M_SERIAL2
+	INCF	ADDRESS			; POINT TO NEXT ENTRY 
+	CALL	EE_READ1		; READ UP 16BITS OF SER # FROM EE
+
+	MOVFW	TMP1			; COMPARE RX AND EEPROM VALUES
+	XORWF	SER_0,W
+	SKPZ				; ... IF NOT EQUAL DO ERROR
+	GOTO	M_NEXT
+
+	MOVFW	TMP2			; COMPARE RX AND EEPROM VALUES
+	XORWF	SER_1,W
+	SKPZ				; ... IF NOT EQUAL DO ERROR
+	GOTO	M_NEXT
+	
+; **************** TEST IF LEARN ACTIVE *******************
+M_PASS
+	MOVLW	NORMAL			; TEST FOR NORMAL PROGRAM FLOW
+	XORWF	SREG,W
+	SKPNZ				
+	GOTO	M_HOP			; IF EQU DECODE TRANSMISSION
+	GOTO	SAVE_TX			; ELSE SAVE TRANSMISSION RECEIVED
+
+; ******** SEARCH NEXT POSITION FOR SERIAL NUMBER *********
+M_NEXT	
+	INCF	TXNUM			; POINT TO NEXT TX POSITION
+	MOVLW	6H			; TEST FOR LAST POSITION
+	SUBWF	TXNUM,W
+	SKPC				; ... IF NOT GET NEXT ENTRY
+	GOTO	M_SERIAL
+
+; **** SERIAL NUMBER NOT FOUND ( ONLY IN NORMAL / PASS1 ) ****
+	MOVLW	PASS1			; TEST IF ON 1ST PASS OF SELFLEARN
+	XORWF	SREG,W
+	SKPZ				; IF EQUAL CONTINUE 
+	GOTO	M_LOOP			; ELSE WAIT FOR NEXT TRANSMISSION
+
+; ****** IF SERIAL NOT IN MAP READ SELFLEARN POINTER ******
+	MOVLW	1H			; POINT TO LEARN POINTER
+	MOVWF	ADDRESS
+	CALL	EE_READ1		; READ LEARN POINTER FROM EEPROM
+
+	MOVLW	07H			; MASK TXNUM FROM POINTER
+	ANDWF	TMP2,W
+	MOVWF	TXNUM
+
+	BTFSS	TXNUM,2			; TXNUM < 4 IS VALID
+	GOTO	SAVE_TX			; SAVE SERIAL NUMBER AND HOP
+
+	BTFSC	TXNUM,1			; TXNUM > 5 IS INVALID
+	CLRF	TXNUM			; ... LEARN POSITION SET TO ZERO
+;  *********** SAVE THE SERIAL NUMBER AND HOP CODE RECEIVED
+SAVE_TX
+	; INDICATE THAT LEARN WAS BUSY IN EEPROM BEFORE CHANGING ANYTHING
+
+	MOVLW	1H			; POINT LEARN POINTER
+	MOVWF	ADDRESS
+	CALL	EE_READ1		; READ LEARN POINTER FROM EEPROM
+
+	MOVLW	BUSY			; INDICATE LEARN ACTIVE IN EEPROM
+	MOVWF	TMP1			
+
+	MOVLW	0FH			; MASK LEARN POINTER
+	ANDWF	TMP2,1
+	MOVLW	6H			; TEST FOR INVALID LEARN POINTER
+	SUBWF	TMP2,W			; TEST FOR INVALID LEARN POINTER
+	SKPNC				; TEST FOR INVALID LEARN POINTER
+	CLRF	TMP2			; IF INVALID POINT TO 1ST POSITION
+
+	SWAPF	TXNUM,W			; COPY TXNUM INTO UPPER NIBBLE
+	IORWF	TMP2,1
+
+	CALL	EE_WRITE1		; UPDATE LEARN POINTER IN EEPROM
+
+
+
+; START BY WRITING THE SERIAL NUMBER TO THE EEPROM	
+	CALL	TX_LOOKUP		; GET TRANSMITTER BASE ADDRESS
+ 	BSF	ADDRESS,1		; ADD 2 TO BASE ADDRESS
+
+	MOVFW	SER_2			; GET LOWER 16 BIT OF SERIAL NR
+	MOVWF	TMP1
+	MOVFW	SER_3
+	MOVWF	TMP2
+	CALL	EE_WRITE1		; ... AND WRITE TO EEPROM
+	
+	MOVFW	SER_0			; GET UPPER 16 BIT OF SERIAL NR
+	MOVWF	TMP1
+	MOVFW	SER_1
+	MOVWF	TMP2
+	CALL	EE_WRITE1		; ... AND WRITE TO EEPROM
+
+; FOLLOWED BY THE HOP CODE RECEIVED	
+	MOVLW	TMP_HOP			; STORE THE HOP PORTION IN ADR 4 & 5
+	MOVWF	ADDRESS
+
+	MOVF	CSR1,W			; STORE THE HOP CODE
+	MOVWF	TMP1
+	MOVF	CSR0,W
+	MOVWF	TMP2
+	CALL	EE_WRITE1
+
+	MOVF	CSR3,W
+	MOVWF	TMP1
+	MOVF	CSR2,W
+	MOVWF	TMP2
+	CALL	EE_WRITE1
+
+	MOVLW	PASS2			; NOW IN 2ND PASS OF SELFLEARN
+	MOVWF	SREG
+	BCF	PORTA,LED		; CLEAR LED ON PASS2 OF LEARN
+
+	GOTO	M_LOOP2			; WAIT FOR SEED TRANSMISSION
+
+; *************** DECRYPT HOPCODE *************************
+M_HOP	
+	CALL	TX_LOOKUP		; LOOK UP TRANSMITTER BASE ADDRESS
+	BSF	ADDRESS,2		; ADD 4 TO BASE ADDRESS
+	GOTO	READ_KEY		; READ 64 BIT DECODER KEY
+
+M_DEC	
+	BCF	STATUS,PA0		; SELECT PAGE #0
+	CALL	DECRYPT			; DECRYPT HOPCODE 
+	BSF	STATUS,PA0		; RE-SELECT PAGE #1
+
+	MOVLW	PASS2			; TEST IF ON 2ND PASS OF SELFLEARN
+	XORWF	SREG,W
+	SKPNZ				; IF EQU UPDATE BUTTON CODES & 
+	GOTO	M_SL_UPDATE		; .DISCR VALUE
+
+	MOVLW	NORMAL			; TEST FOR NORMAL PROGRAM FLOW
+	XORWF	SREG,W
+	SKPNZ				; IF EQU CHECK DISCR VALUE
+	GOTO	M_DIS
+
+	GOTO	RESET1			; ELSE PGM STATE ERROR => RESET
+
+; **** UPDATE BUTTON CODE AND DISCR VALUE AFTER SELFLEARN ****
+M_SL_UPDATE
+	CALL	TX_LOOKUP		; READ THE LS 16 BITS OF SERIAL 
+	BSF	ADDRESS,1
+	CALL	EE_READ1
+	MOVF	CSR2,W			; CHECK THE LS 8 BITS OF DISCR VAL
+	XORWF	TMP2,W
+	BTFSS	STATUS,Z
+	GOTO	RESET1			; DELETE USING RESET IF NOT SAME
+
+	CALL	BUT_LOOKUP		; GET BUTTON CODE BASE ADDRESS
+	MOVWF	ADDRESS
+	
+	MOVFW	FUNC			; GET CURRENT RX BUTTON CODE
+	MOVWF	TMP1
+	MOVFW	CODE			; GET CURRENT RX DISCR CODE
+	MOVWF	TMP2
+	CALL	EE_WRITE1		; AND WRITE BUTTON & DISCR CODES
+
+	GOTO	M_UPDATE		; WRITE THE COUNTERS TO EEPROM
+
+; ************** TEST DICRIMINATION VALUE *****************
+M_DIS
+	CALL	BUT_LOOKUP		; POINT TO BUTTON CODE ADDRESS
+	MOVWF	ADDRESS			; STORE VALUE IN ADDRESS REGISTER
+	CALL	EE_READ1
+
+	MOVFW	TMP1			; CHECK MS 4 BITS OF DISCR VALUE
+	XORWF	FUNC,W
+	ANDLW	0FH			; MASK BUTTON CODES
+	SKPZ				; IF EQUAL CONTINUE
+	GOTO	MAIN			; RETURN TO MAIN
+
+	MOVFW	TMP2			; CHECK DISCRIMINATION VALUE 
+	XORWF	CODE,W
+	SKPNZ				; IF EQUAL CONTINUE
+	GOTO	M_CNT
+	GOTO	MAIN			; NO, THEN WAIT FOR NEXT TX
+
+; *************** CHECK COUNTERS VALID ************
+M_CNT
+	BTFSS	FLAGS,RESYNC		; TEST RESYNC BIT
+	GOTO	M_CNT1			; IF NOT GET COUNTERS FROM EEPROM
+
+	MOVFW	RAM_HI			; GET PREVIOUS TX COUNTER 
+	MOVWF	TMP1
+	MOVFW	RAM_LW
+	MOVWF	TMP2
+	GOTO	M_SUB			; SUBSTRACT FROM CURRENT COUNTER
+
+M_CNT1
+	CALL	TX_LOOKUP		; POINT LOWER 16 BIT COUNTER
+	CALL	EE_READ1		; READ LOWER 16BIT COUNTER FROM EE
+
+	MOVFW	TMP1			; TEMPORY STORE 1ST 16BIT COUNTER
+	MOVWF	TMP3
+	MOVFW	TMP2
+	MOVWF	TMP4
+
+	INCF	ADDRESS			; POINT TO UPPER 16-BIT COUNTER
+	CALL	EE_READ1		; READ UP 16BIT COUNTER FROM EE
+
+	MOVFW	TMP1			; COMPARE UP BYTES OF EE COUNTER
+	XORWF	TMP3,W
+	SKPZ				; IF EQUAL COMPARE LOWER
+	GOTO	M_CNT3			; IF NOT EQUAL FORCE RESYNC
+
+	MOVFW	TMP2			; COMPARE LOW BYTES OF EE COUNTER
+	XORWF	TMP4,W
+	SKPNZ				; IF NOT EQUAL FORCE RESYNC
+	GOTO	M_SUB			; ELSE SUBSTRACT FROM RECEIVED 
+					; .COUNTER VALUE
+M_CNT3	
+	GOTO	M_RESYNC		; FORCE RESYNC (EE CNTERS INVALID)
+
+; ************ CHECK COUNTER WINDOWS ***********
+M_SUB
+	MOVFW	TMP2			; 16 BIT COUNTER SUBSTRACTION
+	SUBWF	CNTR_LW,W
+	MOVWF	TMP2			
+	SKPC				; SKIP IF NO BORROW
+	INCF	TMP1			; ... ELSE INCR HI BYTE
+	MOVFW	TMP1
+	SUBWF	CNTR_HI,W
+	MOVWF	TMP1
+
+	MOVFW	TMP1			; CHECK FOR REPEATED CODES 
+	IORWF	TMP2,W
+	SKPNZ				; IF NOT EQUAL CONTINUE
+	GOTO	M_TZERO			; ELSE RESET EVENT COUNTER AND 
+					; .WAIT FOR NEXT TX
+M_CHECK0
+	BTFSS	FLAGS,RESYNC		; TEST IF RESYNC ACTIVE
+	GOTO	M_CHECK1		; IF NOT CHECK FOR COUNTER VALID
+
+	BCF	FLAGS,RESYNC		; RESET RESYNC FLAG
+	MOVFW	TMP1			; TEST IF IN 2 WINDOW (UPPER BYTE)
+	SKPZ				; ELSE  ABORT
+	GOTO	M_CNT_FAIL
+	MOVLW	0FEH			; TEST IF CONSECUTIVE 
+	ANDWF	TMP2,W			; .TRANSMISSIONS (LOW BYTE)
+	SKPNZ				; IF NOT EQUAL COUNTER INVALID
+	GOTO	M_UPDATE		; ELSE CNTR VALID, UPDATE EE CNTRS
+
+M_CNT_FAIL
+	GOTO	M_LOOP			; ELSE ABORT 
+
+M_CHECK1
+	BTFSC	TMP1,7			; TEST IF IN DARK REGION (> 7FFF)
+	GOTO	M_LOOP			; IF SO IGNORE TRANSMISSION
+
+	MOVFW	TMP1			; TEST FOR RESYNC REQUIRED
+	SKPZ
+	GOTO	M_RESYNC		; DIFFERENCE > 256, FORCE RESYNC
+
+	MOVFW	TMP2			; 16 BIT COUNTER ZERO
+	SKPNZ				; 
+	GOTO	M_LOOP			; COUNTERS EQUAL, IGNORE TX
+
+M_CHECK2
+	MOVLW	0F0H			; TEST IF IN 16 WINDOW
+	ANDWF	TMP2,W
+	SKPNZ				; IF NOT VALID FORCE CNTER RESYNC
+	GOTO	M_UPDATE		; ELSE UPDATE EEPROM COUNTERS
+
+M_RESYNC
+	BSF	FLAGS,RESYNC		; INDICATE RESYNC REQUIRED
+	MOVFW	CNTR_HI			; STORE CURRENT RXED 16BIT COUNTER
+	MOVWF	RAM_HI
+	MOVFW	CNTR_LW
+	MOVWF	RAM_LW
+	GOTO	M_LOOP			; WAIT FOR NEXT TRANSMISSION
+
+; ***************** UPDATE EEPROM COUNTER *****************
+M_UPDATE
+	CALL	TX_LOOKUP		; GET CURRENT TX BASE ADDRESS
+	MOVFW	CNTR_HI			; STORE FIRST 16-BIT RXED COUNTER
+	MOVWF	TMP1
+	MOVFW	CNTR_LW
+	MOVWF	TMP2
+	CALL	EE_WRITE1		; WRITE LSB WORD OF SER NR TO EE
+
+	MOVFW	CNTR_HI			; STORE SECOND 16BIT RXED COUNTER
+	MOVWF	TMP1
+	MOVFW	CNTR_LW
+	MOVWF	TMP2
+	CALL	EE_WRITE1		; WRITE MSB WORD OF SER NR TO EE
+
+
+	CALL	CHK_PASS2		; TEST IF ON SECOND PASS OF LEARN
+	SKPNZ				; IF NOT CONTINUE
+	GOTO	M_PTR			; ELSE UPDATE LEARN POINTER IN EE
+
+	MOVLW	NORMAL			; TEST FOR NORMAL PROGRAM FLOW
+	XORWF	SREG,W
+	SKPNZ				
+	GOTO	M_BUT			; IF EQU CHECK RECEIVED BUTTON CODES
+	GOTO	M_LOOP			; ELSE FLASH WAIT FOR NEXT TX
+
+; **** MAYBE UPDATE LEARN POINTER AFTER VAILD SELFLEARN ****
+M_PTR
+       	MOVLW	1H			; POINT TO LEARN POINTER
+	MOVWF	ADDRESS
+	CALL	EE_READ1		; READ LEARN POINTER FROM EEPROM
+
+	MOVFW	TMP2			; MASK LEARN POINTER
+	ANDLW	07H			; STORE RESULT IN W REGISTER
+	MOVWF	TMP2			; AND TMP2 REGISTER
+
+	XORWF	TXNUM,W			; LEARNING EXISTING OR NEW TX
+	SKPNZ				; TXNUM EQUAL LRN PNTR FOR NEW TX
+	INCF	TMP2			; IF NEW TX INCREMENT LRN POINTER
+
+	MOVLW	6H			; TEST FOR LAST POSITION
+	SUBWF	TMP2,W			; TEST FOR LAST POSITION
+	SKPNC				; TEST FOR LAST POSITION
+	CLRF	TMP2			; IF LAST POS POINT TO FIRST POS
+	CLRF	TMP1			; ALWAYS CLR UP BYTE OF LRN POINTR
+
+       	MOVLW	1H			; POINT TO LEARN POINTER
+	MOVWF	ADDRESS
+	CALL	EE_WRITE1		; WRITE LEARN POINTER TO EEPROM
+
+	MOVLW	NORMAL			; INDICATE NRMAL PGM FLOW
+	MOVWF	SREG
+	BCF	STATUS,PA0		; SELECT PAGE #0
+	GOTO	LEARN_OK		; THEN INDICATE LEARN SUCCESSFUL
+
+; *************** TEST RECEIVED BUTTON CODE ***************
+M_BUT
+	BCF	FLAGS,OUT_500		; ILEGAL BUTTON CODE, 
+					; .RESET 500MS TIMER FLAG
+
+	MOVFW	PORTB			; CHECK FOR TOGGLE OUTPUT ACTIVE
+	ANDLW	0FH
+	SKPNZ				; IF ACTIVE CHECK FOR NEW BUT CODE
+	GOTO	M_ON			; ELSE UPDATE BUTTON OUTPUT
+
+	MOVFW	FUNC			; CHECK FOR NEW BUT CODE WHILE 
+	XORWF	OLD_BUT,W		; .OUTPUT PREVIOUS
+	ANDLW	0F0H
+	SKPNZ				; IF A NEW BCODE CLR OUTPUT 131MS
+	GOTO	M_ON			; ELSE UPDATE OUTPUT
+
+; ***** FORCE OUTPUT DOWN FOR 131 MS BEFORE NEW OUTPUT *****
+M_OFF	
+	MOVLW	070H			; CLEAR OUTPUTS ON PORTB
+	ANDWF	PORTB,1
+	BCF	STATUS,PA0		; SELECT PAGE #0
+	MOVLW	130D			; WAIT 131 MS
+	MOVWF	CNT1
+	CALL	NTQ_LP1
+	BSF	STATUS,PA0		; SELECT PAGE #1
+
+M_ON
+	CALL	BUT_LOOKUP		; READ TX BUTTON CODES FROM EEPROM
+	MOVWF	ADDRESS			
+	CALL	EE_READ1		
+
+	MOVFW	FUNC			; GET RECEIVED BUTTON CODE
+	XORWF	TMP1			; AND COMPARE WITH EEPROM 
+	SKPZ
+	GOTO	M_OUTPUT		; NOT A LEARNED BUTTON CODE	
+	BSF	PORTB,B_LRN		; INDICATE RXED BUTTON CODE LRNED
+
+; ******** UPDATE OUTPUT WITH CURRENT BUTTON CODE *********
+M_OUTPUT
+	MOVFW	FUNC			; STORE CURRENT RXED BUTTON CODE
+	MOVWF	OLD_BUT
+
+	MOVLW	0F0H			; MASK ONLY BUTTON CODES
+	ANDWF	FUNC,1
+	SWAPF	FUNC,1			; GET BUTTON CODE FROM FUNC BYTE
+	
+	BTFSC	FUNC,0			; CHANGE BUTTON TO S-OUTPUT FORMAT
+	BSF	FUNC,4			; [ S2 S1 S0 S3 ]
+	CLRC
+	RRF	FUNC,W			
+
+	IORWF	PORTB,1			; UPDATE OUTPUT WITH BUTTON CODE
+	MOVLW	RDCFG			; SETUP TRI-STATE REG OF PORTB
+	TRIS	PORTB
+
+M_END2	
+	MOVLW	000111B			; SETUP TIMER0 PRESCALER
+	OPTION
+
+M_TZERO
+	CLRF	CNT_HI			; RESET TIMER0 CLOCK
+	CLRF	CNT_LW			
+	CLRF	TIMER0
+
+M_END	
+	GOTO	M_LOOP			; WAIT FOR NEXT TRANMISSION
+
+;------------------------------------------------------------------------------
+; END OF FILE : PIC_DEC.ASM
+;------------------------------------------------------------------------------
+	ORG	3FFH
+	GOTO	RESET
+	END
+

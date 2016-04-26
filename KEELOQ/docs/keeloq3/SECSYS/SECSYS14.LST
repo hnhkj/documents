@@ -1,0 +1,3071 @@
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE  1
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00001 ;------------------------------------------------------------------------------
+                      00002 ;  MICROCHIP KEELOQ SECURITY SYSTEM
+                      00003 ;
+                      00004 ;------------------------------------------------------------------------------
+                      00005 ;  LEGAL NOTICE
+                      00006 ;
+                      00007 ;  The information contained in this document is proprietary and 
+                      00008 ;  confidential information of Microchip Technology Inc.  Therefore all 
+                      00009 ;  parties are required to sign a non-disclosure agreement before 
+                      00010 ;  receiving this document.
+                      00011 ;------------------------------------------------------------------------------
+                      00012 
+                      00013 ;**************************************************************************
+                      00014 ; Program:      SECSYS14.ASM
+                      00015 ;               Microchip EEPROM Alarm System
+                      00016 ; Description:  This program is an example of a KeeLoq decoder, based
+                      00017 ;               on the Microchip PIC platform.  The code is intended for
+                      00018 ;               modification by users to implement their own security
+                      00019 ;               systems.
+                      00020 ; Processor:    Microchip PIC 16C57
+                      00021 ; Assembler:    Microchip MPASM v1.30
+                      00022 ; Options:      WDT=On; RC Oscillator (4 MHz); Code Protection=On
+                      00023 ;**************************************************************************
+                      00024 ; Revision record:
+                      00025 ; 1.40  19 July 1996 Fanie Delport
+                      00026 ;       a. Included adapted receive routine that can handle a wider range 
+                      00027 ;          of transmission speeds.  
+                      00028 ; 1.30  9 June 1996  Kobus Marneweck SECSYS13.ASM
+                      00029 ;       a. Added destination to remove warnings
+                      00030 ; 1.10  26 October 1995  Fanie Delport SECSYS11.ASM
+                      00031 ;       a. Included adapted recieve routine to cater for 
+                      00032 ;          all Keeloq encoders.
+                      00033 ;       b. Removed macros.
+                      00034 ;       c. Added comments.
+                      00035 ; 1.00  02 October 1995  Kobus Marneweck SECSYS10.ASM
+                      00036 ;       Initial version, adapted from Microchip decoder v 1.0 by V N Delport
+                      00037 ;**************************************************************************
+                      00038 
+                      00039         LIST P=16C57,F=INHX8M,R=DEC
+                      00040 
+                      00041 ; GENERAL PURPOSE REGISTERS
+                      00042 
+  00000000            00043 IND     EQU     00H             ; INDIRECT ADDRESS REGISTER
+  00000001            00044 RTCC    EQU     01H             ; REAL TIME COUNTER CLOCK
+  00000002            00045 PC      EQU     02H             ; PROGRAM COUNTER
+  00000003            00046 STATUS  EQU     03H             ; STATUS REGISTER
+  00000004            00047 FSR     EQU     04H             ; FILE SELECT REGISTER
+  00000005            00048 PORTA   EQU     05H             ; PORT A
+  00000006            00049 PORTB   EQU     06H             ; PORT B
+  00000007            00050 PORTC   EQU     07H             ; PORT C
+                      00051 
+                      00052 ; USER DEFINED REGISTER
+                      00053 
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE  2
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+  0000000C            00054 ADDRESS EQU     0CH             ; ADDRESS REGISTER
+  0000000D            00055 TXNUM   EQU     0DH             ; CURRENT TX
+  0000000E            00056 OUTBYT  EQU     0EH             ; GENERAL DATA REGISTER
+  0000000E            00057 MASK    EQU     OUTBYT          ; MASK REGISTER USED IN DECRYPTION
+  0000000E            00058 TMP_CNT EQU     OUTBYT          ; RECEIVE ROUTINE TEMPORARY COUNTER
+  0000000C            00059 CSR8    EQU     ADDRESS         ; MSB OF RX REGISTER
+                      00060 
+                      00061 
+                      00062 ; COUNTER REGISTERS
+                      00063 
+  00000018            00064 CNT0    EQU     18H             ; LOOP COUNTERS
+  00000019            00065 CNT1    EQU     19H             
+  0000001A            00066 CNT2    EQU     1AH             
+                      00067 
+  0000001B            00068 CNT_HI  EQU     1BH             ; 16 BIT CLOCK COUNTER
+  0000001C            00069 CNT_LW  EQU     1CH             
+                      00070 
+                      00071 ; TEMP REGISTERS
+                      00072 
+  00000010            00073 TMP1    EQU     10H             ; TEMP REGISTERS
+  00000011            00074 TMP2    EQU     11H
+  00000012            00075 TMP3    EQU     12H
+  00000013            00076 TMP4    EQU     13H
+                      00077 
+                      00078 ; CIRCULAR BUFFER REGISTER
+                      00079 
+  00000014            00080 CSR4    EQU     14H             ; 64 BIT RECEIVE SHIFT REGISTER
+  00000015            00081 CSR5    EQU     15H            
+  00000016            00082 CSR6    EQU     16H            
+  00000017            00083 CSR7    EQU     17H            
+                      00084 
+  00000008            00085 CSR0    EQU     08H             
+  00000009            00086 CSR1    EQU     09H            
+  0000000A            00087 CSR2    EQU     0AH            
+  0000000B            00088 CSR3    EQU     0BH            
+                      00089 
+                      00090 ; **** WORK REGISTERS ********
+                      00091 
+  0000001E            00092 STACK   EQU     1EH             ; EXTRA STACK LEVEL
+  0000001F            00093 FLAGS   EQU     1FH             ; USER FLAG REGISTER
+  0000000F            00094 FLAGS1  EQU     0FH             ; USER FLAG REGISTER
+  0000001D            00095 RAMS    EQU     1DH             ; RAM STATE
+                      00096 
+                      00097 ; **************  DECRYPTION REGISTER RE-MAPPINGS *******************
+                      00098 ;
+                      00099 ; NOTE : INDIRECT ADDRESSING USED, DO NOT CHANGE REGISTER ASSIGNMENT 
+                      00100 ;
+                      00101 ; ******************************************************************
+                      00102 
+  00000011            00103 KEY0    EQU     TMP2            ; 64 BIT SHIFT REGISTER WITH DECRYPTION KEY
+  00000010            00104 KEY1    EQU     TMP1
+  00000012            00105 KEY2    EQU     TMP3
+  00000013            00106 KEY3    EQU     TMP4
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE  3
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+  00000014            00107 KEY4    EQU     CSR4
+  00000015            00108 KEY5    EQU     CSR5
+  00000016            00109 KEY6    EQU     CSR6
+  00000017            00110 KEY7    EQU     CSR7
+                      00111 
+  00000008            00112 HOP1    EQU     CSR0            ; 32 BIT HOPCODE REGISTER
+  00000009            00113 HOP2    EQU     CSR1
+  0000000A            00114 HOP3    EQU     CSR2
+  0000000B            00115 HOP4    EQU     CSR3
+                      00116 
+                      00117 ; ***** USER REGISTER RE-MAPPINGS ***************
+                      00118 
+  0000000B            00119 DAT1    EQU     CSR3            ; 32 BIT DATA REGISTER
+  0000000A            00120 DAT2    EQU     CSR2
+  00000009            00121 DAT3    EQU     CSR1
+  00000008            00122 DAT4    EQU     CSR0
+                      00123 
+                      00124 ; NOTE : THESE REGISTERS ARE USED DURING KEYGEN AS A 32 BIT BUFFER
+                      00125 
+  00000030            00126 ETMP1   EQU     30H             ; EXTENDED 32 BIT BUFFER IN RAM PAGE 1
+  00000031            00127 ETMP2   EQU     31H
+  00000032            00128 ETMP3   EQU     32H 
+  00000033            00129 ETMP4   EQU     33H 
+                      00130 
+                      00131 ; SECOND SET OF COUNTERS
+  00000034            00132 CNT1_LW EQU     34H
+  00000035            00133 CNT1_HI EQU     35H
+  00000036            00134 CNT2_LW EQU     36H
+  00000037            00135 CNT2_HI EQU     37H
+                      00136 
+                      00137 ; RECEIVED TRANSMISSION OPEN 32 BITS 
+                      00138 
+  00000017            00139 SER_0   EQU     CSR7            ; 24/28 BIT SERIAL NUMBER
+  00000016            00140 SER_1   EQU     CSR6
+  00000015            00141 SER_2   EQU     CSR5
+  00000014            00142 SER_3   EQU     CSR4
+                      00143 
+                      00144 ; RECEIVED TRANSMISSION ENCRYPTED 32 BITS 
+                      00145 
+  0000000B            00146 FUNC    EQU     DAT1            ; BUTTON CODE & USER BIT FUNCTION BYTE
+Error[149]  : Directive only allowed when generating an object file
+                      00147 CODE    EQU     DAT2            ; DISCRIMINATION VALUE
+  00000009            00148 CNTR_HI EQU     DAT3            ; 16 BIT RX COUNTER
+  00000008            00149 CNTR_LW EQU     DAT4
+                      00150 
+                      00151 ; ********* EEPROM MEMORY ALLOCATION *******
+  00000001            00152 LRN_PTR EQU     1H              ; LEARN POINTER
+  00000002            00153 SSTATUS EQU     2H              ; SYSTEM STATUS
+  00000003            00154 BSTATUS EQU     3H              ; BACKUP STATUS
+  00000004            00155 TMPCNT  EQU     4H              ; TEMPORARY COUNTER FOR RE-SYNC
+                      00156 
+  000000C7            00157 X1      EQU     0C7H            ; VALUES FOR STATE RECOVER
+  0000008B            00158 X2      EQU     08BH
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE  4
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00159 
+                      00160 ; ********* PORTA BIT DEFINITIONS *******
+                      00161 
+  00000000            00162 DIO     EQU     0H              ; 0/1 EEPROM DATA LINE
+  00000001            00163 CLK     EQU     1H              ; 0 EEPROM SERIAL CLOCK
+  00000002            00164 CS      EQU     2H              ; 0 EEPROM CHIP SELECT
+  00000003            00165 RFIN    EQU     3H              ; 1 RF INPUT
+                      00166 
+                      00167 ; ********* PORTB BIT DEFINITIONS *******
+                      00168 
+  00000000            00169 IMMO    EQU     0H              ; 0 IMMOBILIZE OUTPUT
+  00000001            00170 SIREN   EQU     1H              ; 0 SIREN OUTPUT
+  00000002            00171 PLIGHT  EQU     2H              ; 0 PARKING LIGHT OUTPUT
+                      00172 
+  00000004            00173 LOCK    EQU     4H              ; 0 LOCK OUTPUT
+  00000005            00174 UNLOCK  EQU     5H              ; 0 UNLOCK OUTPUT
+  00000006            00175 TRUNK   EQU     6H              ; 0 TRUNK OUTPUT
+  00000007            00176 LED     EQU     7H              ; 0 LED INDICATOR
+                      00177 
+                      00178 ; ********* PORTC BIT DEFINITIONS *******
+                      00179 
+  00000000            00180 IGN     EQU     0H              ; 1 IGNITION INPUT
+  00000001            00181 TRIG    EQU     1H              ; 1 TRIG INPUT
+  00000002            00182 DOOR    EQU     2H              ; 1 DOORS INPUT
+  00000003            00183 LEARN   EQU     3H              ; 1 LEARN INPUT
+                      00184 
+                      00185 ; ********* COMPILER DEFINES ******************
+  00000042            00186 NBITS   EQU     66              ; MAXIMUM TRANSMISSION BIT LENGTH
+  00000230            00187 MIN     EQU     560             ; TRANSMISSION HEADER MINIMUM LENGTH [ÊS]
+                      00188 ;MAX     EQU     10800          ; TRANSMISSION HEADER MAXIMUM LENGTH [ÊS]
+  00000009            00189 TRISA   EQU     1001B           ; PORTA: TRI-STATE VALUE
+  00000008            00190 WRCFG   EQU     1000B           ; PORTA: EEPROM WRITE TRI-STATE VALUE
+  00000009            00191 RDCFG   EQU     1001B           ; PORTA: EEPROM READ TRI-STATE VALUE
+  00000000            00192 TRISB   EQU     00000000B       ; PORTB: TRI-STATE VALUE
+  000000FF            00193 TRISC   EQU     11111111B       ; PORTC: TRI-STATE VALUE
+  00000000            00194 E_OK    EQU     000H            ;  0  VALID RESPONSE
+                      00195 
+                      00196 ;****** STATE DEFINITIONS **************
+  000000A5            00197 ARMEDS  EQU     0A5H            
+  0000005A            00198 DRIVES  EQU     05AH
+  0000003C            00199 IMMOBS  EQU     03CH
+  000000C3            00200 LEARNS  EQU     0C3H
+  00000042            00201 ALARMS  EQU     042H
+                      00202 
+                      00203 ;****** FLAGS DEFINITIONS **************
+  00000000            00204 NORMAL  EQU     0H              ; NORMAL PROGRAM FLOW
+  00000001            00205 PASS1   EQU     1H              ; LEARN FIRST PASS
+  00000002            00206 PASS2   EQU     2H              ; LEARN SECOND PASS
+  00000003            00207 LFLASH  EQU     3H              ; FLASH LED
+  00000004            00208 PFLASH  EQU     4H              ; FLASH PLIGHT
+  00000005            00209 NTQ106  EQU     5H              ; INDICATE NTQ106 TRANSMISSION RECEIVED
+  00000006            00210 RESYNC  EQU     6H              ; RESYNCH ACTIVE BIT
+  00000007            00211 RPT     EQU     7H              ; REPEATED CODE
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE  5
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00212 
+                      00213 ;****** FLAGS1 DEFINITIONS **************
+  00000000            00214 BITIN   EQU     0H              ; RF DATA BIT
+  00000001            00215 S_RSTR  EQU     1H              ; FLAGS MUST BE RESTORED
+  00000002            00216 ENTRY   EQU     2H              ; ENTRY FLAG            
+  00000003            00217 BAT_LOW EQU     3H              ; ENCODER BATTERY LOW INDICATOR
+                      00218 
+                      00219 
+                      00220 ;****** STATUS REGISTER BIT DEFINITIONS *****************
+  00000000            00221 CARRY   EQU       0             ; CARRY
+  00000001            00222 DC      EQU       1             ; DIGIT CARRY
+  00000002            00223 ZERO    EQU       2             ; ZERO
+  00000003            00224 PD      EQU       3             ; POWER DOWN
+  00000004            00225 TO      EQU       4             ; TIMEOUT
+  00000005            00226 PA0     EQU       5             ; PAGE SELECT [0 OR 1]
+  00000006            00227 PA1     EQU       6             ; PAGE SELECT [0 OR 1]
+  00000007            00228 OVF     EQU       7             ; RTCC OVERFLOW
+                      00229 
+                      00230 ;**************************************************************************
+                      00231 ; PAGE 0: 
+                      00232 ;**************************************************************************
+0000                  00233         ORG 00H
+                      00234 
+                      00235 ;**************************************************************************
+                      00236 ;
+                      00237 ; FUNCTION     : RESET ()                               
+                      00238 ;
+                      00239 ; DESCRIPTION  : PROGRAM RESET ROUTINE
+                      00240 ;
+                      00241 ; PAGE          : 0
+                      00242 ;
+                      00243 ;**************************************************************************
+0000                  00244 RESET   
+0000   0C07           00245         MOVLW   00000111B               ; SETUP RTCC PRESCALER
+0001   0002           00246         OPTION                          ; 1 : 256
+                      00247 
+0002   05A3           00248         BSF     STATUS,PA0              ; SELECT PAGE #1
+0003   0AB4           00249         GOTO    RESET_P1                ; GOTO MAIN PROGRAM LOOP
+                      00250 
+                      00251 ;**************************************************************************
+                      00252 ; UPPER PAGE CALLS
+                      00253 ;**************************************************************************
+                      00254 
+0004   0B71           00255 SENDC   GOTO    SENDC1                  ; UPPER PAGE CALL TO SENDC
+                      00256 
+0005                  00257 TST_LEARN
+0005   0B49           00258         GOTO    TST_LEARN1              ; CALL LEARN BUTTON TEST ROUTINE
+                      00259 
+0006                  00260 TST_RTCC
+0006   0B0B           00261         GOTO    TST_RTCC1
+                      00262 
+0007                  00263 EE_WRITE0
+0007   0B8A           00264         GOTO    EEWRITE                 ; CALL EEPROM WRITE ROUTINE
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE  6
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00265 
+0008                  00266 M_LOOP0
+0008   05A3           00267         BSF     STATUS,PA0
+0009   0B06           00268         GOTO    M_LOOP
+                      00269 
+                      00270 ;**************************************************************************
+                      00271 ;
+                      00272 ; FUNCTION      : ROT_SHIFT()                           
+                      00273 ;
+                      00274 ; DESCRIPTION   : RIGHT ROTATE 66 BIT RECEIVE SHIFT REGISTER
+                      00275 ;
+                      00276 ; PAGE          : 0
+                      00277 ;
+                      00278 ;**************************************************************************
+000A                  00279 ROT_SHIFT
+000A   032C           00280         RRF     CSR8,1                  ; [1] RIGHT ROTATE RECEIVE SHIFT REGISTER
+000B   0337           00281         RRF     CSR7,1                  ; [1] RIGHT ROTATE RECEIVE SHIFT REGISTER
+000C   0336           00282         RRF     CSR6,1                  ; [1] RIGHT ROTATE RECEIVE SHIFT REGISTER   
+000D   0335           00283         RRF     CSR5,1                  ; [1] RIGHT ROTATE RECEIVE SHIFT REGISTER   
+000E   0334           00284         RRF     CSR4,1                  ; [1] RIGHT ROTATE RECEIVE SHIFT REGISTER   
+000F   032B           00285         RRF     CSR3,1                  ; [1] RIGHT ROTATE RECEIVE SHIFT REGISTER   
+0010   032A           00286         RRF     CSR2,1                  ; [1] RIGHT ROTATE RECEIVE SHIFT REGISTER   
+0011   0329           00287         RRF     CSR1,1                  ; [1] RIGHT ROTATE RECEIVE SHIFT REGISTER  
+0012   0328           00288         RRF     CSR0,1                  ; [1] RIGHT ROTATE RECEIVE SHIFT REGISTER  
+0013   0800           00289         RETLW   E_OK                    ; [2] 
+                      00290 ;**************************************************************************
+                      00291 ;
+                      00292 ; FUNCTION      : ROTR()                                
+                      00293 ;
+                      00294 ; DESCRIPTION   : ROTATE 16 BIT SHIFT REGISTER RIGHT
+                      00295 ;
+                      00296 ; PAGE          : 0
+                      00297 ;
+                      00298 ;**************************************************************************
+0014                  00299 ROTR
+0014   0330           00300         RRF     TMP1,F
+0015   0331           00301         RRF     TMP2,F
+0016   04F0           00302         BCF     TMP1,7
+0017   0603           00303         BTFSC   STATUS,CARRY
+0018   05F0           00304         BSF     TMP1,7
+0019   0800           00305         RETLW   0
+                      00306 ;**************************************************************************
+                      00307 ;
+                      00308 ; FUNCTION      : ROTL()                                
+                      00309 ;
+                      00310 ; DESCRIPTION   : ROTATE 16 BIT SHIFT REGISTER LEFT
+                      00311 ;
+                      00312 ; PAGE          : 0
+                      00313 ;
+                      00314 ;**************************************************************************
+001A                  00315 ROTL
+001A   0371           00316         RLF     TMP2,F
+001B   0370           00317         RLF     TMP1,F
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE  7
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+001C   0411           00318         BCF     TMP2,0
+001D   0603           00319         BTFSC   STATUS,CARRY
+001E   0511           00320         BSF     TMP2,0
+001F   0800           00321         RETLW   0
+                      00322 
+                      00323 ;**************************************************************************
+                      00324 ;
+                      00325 ; FUNCTION      : EEREAD ()                             
+                      00326 ;
+                      00327 ; DESCRIPTION   : READ 16 BIT VALUE FROM EEPROM AND DECRYPT
+                      00328 ;
+                      00329 ; PAGE          : 0
+                      00330 ;
+                      00331 ;**************************************************************************
+0020                  00332 EEREAD
+0020   020C           00333         MOVFW   ADDRESS
+0021   002E           00334         MOVWF   OUTBYT
+0022   05EE           00335         BSF     OUTBYT,7                ; COMMAND = READ
+0023   0904           00336         CALL    SENDC                   ; SEND COMMAND
+0024   0C09           00337         MOVLW   RDCFG
+0025   0005           00338         TRIS    PORTA                   ; DIO = INPUT
+0026   0C10           00339         MOVLW   16D                     ; 16 BITS TO READ
+0027   0039           00340         MOVWF   CNT1
+                      00341 
+0028   0525           00342 READ0   BSF     PORTA,CLK               ; CLOCK HIGH
+0029   0371           00343         RLF     TMP2,F                  ; SHIFT LO BYTE
+002A   0411           00344         BCF     TMP2,0                  ; ASSUME BIT WILL BE 0
+002B   0605           00345         BTFSC   PORTA,DIO               ; READ DIO LINE
+002C   0511           00346         BSF     TMP2,0                  ; COPY BIT TO REGISTER
+002D   0425           00347         BCF     PORTA,CLK               ; CLOCK LOW
+002E   0370           00348         RLF     TMP1,F                  ; SHIFT HI BYTE
+002F   02F9           00349         DECFSZ  CNT1,F                  ; LOOP COUNTER
+0030   0A28           00350         GOTO    READ0
+0031   0445           00351         BCF     PORTA,CS                ; END READ CYCLE
+                      00352 
+                      00353 ; ******* DECRYPT 16-BIT WORD READ FROM EEPROM ***************
+                      00354 
+0032                  00355 IFNC    
+0032   0C10           00356         MOVLW   16D
+0033   0039           00357         MOVWF   CNT1
+                      00358 
+0034   091A           00359 IFNC1   CALL    ROTL
+0035   0C07           00360         MOVLW   07H                     ; MASK ONLY LOWER 3 BITS
+0036   0150           00361         ANDWF   TMP1,W
+0037   002E           00362         MOVWF   OUTBYT                  ; TEMPORY STORE RESULT
+0038   0C08           00363         MOVLW   (EE_KEY-KEYBASE)        ; GET BASE ADDRES OF EEPROM KEY
+0039   01CE           00364         ADDWF   OUTBYT,W                ; ... AND ADD TO RESULT
+003A   093F           00365         CALL    KEY_LOOKUP              ; KEY BYTE FROM KEY LOOKUP TABLE
+003B   01B1           00366         XORWF   TMP2,F
+003C   02F9           00367         DECFSZ  CNT1,F  
+003D   0A34           00368         GOTO    IFNC1
+                      00369 
+003E   0800           00370         RETLW   0H
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE  8
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00371 
+                      00372 ;**************************************************************************
+                      00373 ; Memory Map ROM Keys
+                      00374 ;**************************************************************************
+003F                  00375         ORG     3FH
+003F                  00376 KEY_LOOKUP
+003F   01E2           00377         ADDWF   PC,1                    ; ADD OFFSET TO PROGRAM COUNTER
+                      00378 
+  00000040            00379 KEYBASE EQU     $                       ; BASE ADDRESS 40H
+  00000040            00380 MAS_KEY EQU     $                       ; MASTER KEY BASE ADDRESS
+0040   08EF           00381         RETLW   0EFH                    ; MKEY_0 LSB
+0041   08CD           00382         RETLW   0CDH                    ; MKEY_1
+0042   08AB           00383         RETLW   0ABH                    ; MKEY_2
+0043   0889           00384         RETLW   089H                    ; MKEY_3
+0044   0867           00385         RETLW   067H                    ; MKEY_4
+0045   0845           00386         RETLW   045H                    ; MKEY_5
+0046   0823           00387         RETLW   023H                    ; MKEY_6
+0047   0801           00388         RETLW   001H                    ; MKEY_7 MSB
+                      00389 
+  00000048            00390 EE_KEY  EQU     $                       ; EEPROM KEY BASE ADDRESS
+0048   0888           00391         RETLW   088H                    ; EKEY_0 LSB
+0049   0877           00392         RETLW   077H                    ; EKEY_1
+004A   0866           00393         RETLW   066H                    ; EKEY_2
+004B   0855           00394         RETLW   055H                    ; EKEY_3
+004C   0844           00395         RETLW   044H                    ; EKEY_4
+004D   0833           00396         RETLW   033H                    ; EKEY_5
+004E   0822           00397         RETLW   022H                    ; EKEY_6
+004F   0811           00398         RETLW   011H                    ; EKEY_7 MSB
+                      00399 
+                      00400 ;**************************************************************************
+                      00401 ; FUNCTION      : RECEIVE
+                      00402 ;
+                      00403 ; DESCRIPTION   : RECEIVE ROUTINE FOR KEELOQ TRANSMISSIONS
+                      00404 ;
+                      00405 ; PAGE          : 0
+                      00406 ;
+                      00407 ;**************************************************************************
+0050                  00408 RECEIVE
+                      00409 
+                      00410 ;******** WAIT FOR HEADER AND CALIBRATE *******************
+                      00411 
+0050   04BF           00412         BCF     FLAGS,NTQ106            ; RESET NTQ106 TRANSMISSION FLAG
+0051   0765           00413         BTFSS   PORTA,RFIN              ; INPUT LOW?
+0052   0AB2           00414         GOTO    RMT_0                   ; YES; RECEIVE ERROR
+                      00415 
+0053   0C0A           00416         MOVLW   10                      ; 10 ms TIMER
+0054   0039           00417         MOVWF   CNT1
+0055                  00418 RCV0
+0055   0CC8           00419         MOVLW   200
+0056   0038           00420         MOVWF   CNT0
+0057                  00421 RCV1
+0057   0765           00422         BTFSS   PORTA,RFIN              ; [2] INPUT HIGH?
+0058   0A5D           00423         GOTO    RCV2                    ; [0] NO, JUMP OUT OF LOOP
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE  9
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+0059   02F8           00424         DECFSZ  CNT0,1                  ; [1] YES, CONTINUE WITH TIMING LOOP
+005A   0A57           00425         GOTO    RCV1                    ; [2] 5 us X CNT0
+005B   02F9           00426         DECFSZ  CNT1,1                  ; [0] DO 1 ms LOOP CNT1 TIMES
+005C   0A55           00427         GOTO    RCV0                    ; [0]
+                      00428 
+005D                  00429 RCV2
+005D   0078           00430         CLRF    CNT0                    ; [1] CLEAR CALIB COUNTER LOW BYTE
+005E   0079           00431         CLRF    CNT1                    ; [1] CLEAR CALIB COUNTER HIGH BYTE
+                      00432 
+                      00433 ;*************************************************************************
+                      00434 ;  2.5 IS AVERAGE FOR DETECTING FALLING EDGE IN RCV1
+                      00435 ;  2   INSTRUCTIONS FOR JUMP OUT RCV1 TO RCV2
+                      00436 ;  2   INSTRUCTIONS FOR RCV2 - CLEAR CALIBRATION COUNTER
+                      00437 ;  TOTAL 6.5 INSTRUCTIONS < 1 CALIBRATION LOOP SO DISCARD
+                      00438 ;*************************************************************************
+                      00439 
+005F                  00440 RCV3
+005F   0665           00441         BTFSC   PORTA,RFIN              ; [2][2] INPUT HIGH?
+0060   0A69           00442         GOTO    RCV6                    ; [0][0] YES--END CALIBRATION
+0061   02B8           00443         INCF    CNT0,1                  ; [1] INCREMENT 16BIT COUNTER   
+0062   0643           00444         SKPNZ                           ; [2]
+0063   02B9           00445         INCF    CNT1,1                  ; [0]
+0064   0004           00446         CLRWDT                          ; [1] RESET WATCH DOG TIMER
+0065   0000           00447         NOP                             ; [1]
+0066   0779           00448         BTFSS   CNT1,3                  ; [1]
+0067   0A5F           00449         GOTO    RCV3                    ; [2]
+0068   0AB2           00450         GOTO    RMT_0                   ; [0]
+                      00451                                         ; TOTAL = 10
+                      00452                                         
+0069                  00453 RCV6
+0069   0403           00454         CLRC                            ; [1] DIVIDE CNT1:CNT0 BY 8 (600/8=75)
+006A   0339           00455         RRF     CNT1,1                  ; [1]
+006B   0338           00456         RRF     CNT0,1                  ; [1]
+006C   0339           00457         RRF     CNT1,1                  ; [1]
+006D   0338           00458         RRF     CNT0,1                  ; [1]
+006E   0339           00459         RRF     CNT1,1                  ; [1]
+006F   0338           00460         RRF     CNT0,1                  ; [1] 
+                      00461                                         
+0070   0C07           00462         MOVLW   MIN/80                  ; [1]
+0071   0098           00463         SUBWF   CNT0,W                  ; [1]
+0072   0703           00464         BTFSS   STATUS,CARRY            ; [2] NEGATIVE?
+0073   0AB2           00465         GOTO    RMT_0                   ; [0] YES--HEADER SHORTER THAN MIN.
+                      00466                                         ; TOTAL = 11
+                      00467 ; ************* VALID HEADER RECEIVED *********************
+0074                  00468 RCV7
+0074   0C42           00469         MOVLW   NBITS                   ; [1] VALID START MARKER WAS RECEIVED
+0075   0039           00470         MOVWF   CNT1                    ; [1]
+0076   0218           00471         MOVF    CNT0,W                  ; [1]
+0077   003A           00472         MOVWF   CNT2                    ; [1] CNT2 = CNT0
+0078   0C06           00473         MOVLW   6H                      ; [1] SEE NOTE BELOW
+0079   00BA           00474         SUBWF   CNT2,1                  ; [1]
+007A   0A8C           00475         GOTO    DL1                     ; [2] COMPENSATE FOR FIRST BIT
+                      00476                                         ; TOTAL = 8
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 10
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00477 
+                      00478 ;**********************************************************************************
+                      00479 ;  2.5 IS AVERAGE PLAY BETWEEN RISING EDGE AND JUMP OUT OF CALIBRATION LOOP.
+                      00480 ;  2   FOR JUMP OUT OF RCV3 TO RCV6
+                      00481 ; 11   INSTRUCTIONS FOR RVC6 - CAIBRATION COUNTER DIVIDE
+                      00482 ;  8   INSTRUCTIONS FOR RCV7 - COMPENSATE FOR POST CALIBRATION CALCUATIONS
+                      00483 ; TOTAL 22.5 INSTRUCTIONS BETWEEN RISING EDGE AND ENTERING DL1
+                      00484 ;  THEREFORE SUBTRACT 22.5/4 = 5.625 TO COMPENSATE FOR POST CALCULATION ON 1ST BIT
+                      00485 ;**********************************************************************************
+                      00486 
+007B                  00487 RCV8                                    
+007B   0C04           00488         MOVLW   4H                      ; [1] WAIT A MAXIMUM OF 4 Te
+007C   002E           00489         MOVWF   TMP_CNT                 ; [1] SET TEMP LOOP COUNTER
+                      00490 
+007D                  00491 RCV10A
+007D   0218           00492         MOVFW   CNT0                    ; [1] and CSR processing
+007E   003A           00493         MOVWF   CNT2                    ; [1] Refer to explanation above
+                      00494 
+007F                  00495 RCV10B
+007F   0665           00496         BTFSC   PORTA,RFIN              ; [2] Wait for rising edge
+0080   0A89           00497         GOTO    RCV11                   ; [0] Edge found--Process
+0081   0004           00498         CLRWDT                          ; [1] Clear watchdog Timer
+0082   0665           00499         BTFSC   PORTA,RFIN              ; [2] Wait for Next rising edge
+0083   0A89           00500         GOTO    RCV11                   ; [0] Edge found--Process
+0084   02FA           00501         DECFSZ  CNT2,1                  ; [1] Decrement Timeout counter
+0085   0A7F           00502         GOTO    RCV10B                  ; [2] Loop Back
+                      00503                                         ; TOTAL = 8, RFIN CHECKED EVERY 4uS ON AVERAGE
+                      00504 
+0086   02EE           00505         DECFSZ  TMP_CNT,1               ; [1] ALL Te PERIODS
+0087   0A7D           00506         GOTO    RCV10A                  ; [2] ... NO, THEN WAIT FOR NEXT ONE
+0088   0AB4           00507         GOTO    RMT01                   ; [0] ... YES, [0] TIMEOUT--no edge found
+                      00508 
+0089                  00509 RCV11
+0089   0C03           00510         MOVLW   3H                      ; [1]  SEE NOTE BELOW
+008A   0098           00511         SUBWF   CNT0,W                  ; [1]
+008B   003A           00512         MOVWF   CNT2                    ; [1]
+                      00513 
+                      00514 ;*************************************************************************
+                      00515 ; 2   SETUP OF TEMP LOOP COUNTER  ( ONLY ONCE )
+                      00516 ; 2   SETUP TE LOOP COUNTER       ( MAX 4 )
+                      00517 ; 3   DECREMENT TEMP LOOP COUNTER ( MAX 4 )
+                      00518 ; 4   IS THE AVERAGE PLAY BETWEEN EDGE AND EDJE BEING DETECTED IN RCV9
+                      00519 ; 2   JUMP OUT OF RCV10B TO RCV11
+                      00520 ; 3   FOR RCV11
+                      00521 ; TOTAL 10 INSTRUCTIONS BETWEEN EDGE AND ENTERING DL1
+                      00522 ; THEREFORE SUBTRACT 10/4 = 2.5 => 3 DL1 LOOPS TO COMPENSATE FOR 
+                      00523 ;*************************************************************************
+                      00524 
+008C                  00525 DL1
+008C   0004           00526         CLRWDT                          ; [1] RESET WATCHDOG TIMER
+008D   02FA           00527         DECFSZ  CNT2,1                  ; [1] [2, IF SKIP]
+008E   0A8C           00528         GOTO    DL1                     ; [2] CNT0 X 4 us
+                      00529 
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 11
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+008F                  00530 SAMPLE1
+008F   0765           00531         BTFSS   PORTA,RFIN              ; [2] INPUT HIGH?  FIRST SAMPLE
+0090   0AB4           00532         GOTO    RMT01                   ; [0] NO--ERROR
+                      00533 
+0091   0218           00534         MOVF    CNT0,W                  ; [1] CALIBRATION COUNTER
+0092   003A           00535         MOVWF   CNT2                    ; [1] (NOMINALLY 75 FOR 300 us PULSE)
+0093   00FA           00536         DECF    CNT2,1                  ; [1] SUBTRACT 2 FROM FINAL CALIB COUNTER TO COMPENATE FOR THIS
+0094   0A95           00537         GOTO    $+1                     ; [2]
+0095   0000           00538         NOP                             ; [1]
+                      00539                                         ; TOTAL = 8 => 1 LOOP COUNTER
+0096                  00540 DL2
+0096   0004           00541         CLRWDT                          ; [1] RESET WATCHDOG TIMER
+0097   0A98           00542         GOTO    $+1                     ; [2] WAISTE TIME
+0098   0A99           00543         GOTO    $+1                     ; [2] WAISTE TIME
+0099   02FA           00544         DECFSZ  CNT2,1                  ; [1]
+009A   0A96           00545         GOTO    DL2                     ; [2] CNT0 X 8 us [ CNT0 x Te ]
+                      00546 
+009B                  00547 SAMPLE2
+009B   040F           00548         BCF     FLAGS1,BITIN             ; [1]   CLEAR BIT POSITION
+009C   0765           00549         BTFSS   PORTA,RFIN              ; [1.5] LEAVE 0 IF LINE HIGH
+009D   050F           00550         BSF     FLAGS1,BITIN             ; [0.5] MAKE 1 IF LINE LOW
+                      00551                                         ; SUB TOTAL = 3 CYCLES
+                      00552 
+009E   090A           00553         CALL    ROT_SHIFT               ; [11]+[2] CSR SHIFT + CALL
+009F   04EC           00554         BCF     CSR8,7                  ; [1]
+00A0   060F           00555         BTFSC   FLAGS1,BITIN            ; [1.5]
+00A1   05EC           00556         BSF     CSR8,7                  ; [0.5]
+                      00557                                         ; SUB TOTAL = 16 CYCLES
+                      00558 
+                      00559 
+00A2   0218           00560         MOVF    CNT0,W                  ; [1] CALIBRATION COUNTER
+00A3   003A           00561         MOVWF   CNT2                    ; [1] (NOMINALLY 75 FOR 300 us PULSE)
+00A4   0C03           00562         MOVLW   3                       ; [1] SEE CALCULATION BELOW
+00A5   00BA           00563         SUBWF   CNT2,1                  ; [1]
+00A6   0000           00564         NOP                             ; [1]
+                      00565                                         ; SUB TOTAL = 5 CYCLE
+                      00566                                         ; TOTAL = 24 => 24/8 = 3 LOOP COUNTERS
+                      00567                                          
+                      00568 ;*************************************************************************
+                      00569 ; TOTAL = 24 INSTRUCTIONS
+                      00570 ; SUBTRACT 24/8 = 3 TO COMPESATE FOR UPDATEING CSR AND OTHER PROCESSING 
+                      00571 ; AFTER DATA SAMPLE IS TAKEN.
+                      00572 ;*************************************************************************
+                      00573 
+00A7                  00574 DL3
+00A7   0AA8           00575         GOTO    $+1                     ; [2] WAISTE TIME
+00A8   0AA9           00576         GOTO    $+1                     ; [2] WAISTE TIME
+00A9   0004           00577         CLRWDT                          ; [1] RESET WATCHDOG TIMER
+00AA   02FA           00578         DECFSZ  CNT2,1                  ; [1]
+00AB   0AA7           00579         GOTO    DL3                     ; [2] CNT0 X 8 us [ CNT0 X Te ]
+                      00580 
+00AC                  00581 SAMPLE3
+00AC   0665           00582         BTFSC   PORTA,RFIN              ; [2] INPUT LOW?  THIRD SAMPLE
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 12
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+00AD   0AB3           00583         GOTO    RMT0                    ; [0] NO--RECEIVE ERROR
+                      00584 
+00AE   0906           00585         CALL    TST_RTCC                ; [11] CHECK RTCC
+                      00586 
+00AF   02F9           00587         DECFSZ  CNT1,1                  ; [1] LAST BIT?
+00B0   0A7B           00588         GOTO    RCV8                    ; [2] ... NO, GET NEXT BIT
+                      00589                                         ; TOTAL = 14 CYCLES
+                      00590 
+00B1   0ABA           00591         GOTO    RMT21                   ; [2] ... YES, ALL BITS RECEIVED
+                      00592 
+00B2                  00593 RMT_0
+00B2   0599           00594         BSF     CNT1,4                  ; [1] HEADER ERROR--FORCE COUNTER > 11
+                      00595 
+00B3                  00596 RMT0                                    ; [1] HERE IF NOT ALL BITS RECEIVED OK
+00B3   00F9           00597         DECF    CNT1,1                  ; [1] COMPENSATE FOR ROTATE BEFORE DL3
+                      00598 
+                      00599 ; ***** JUMP TO HERE IF NOT ALL 66 BITS RECEIVED OK *****
+                      00600 
+00B4                  00601 RMT01                                   
+00B4   0906           00602         CALL    TST_RTCC                ; [11] CHECK RTCC
+                      00603 
+00B5   0C0B           00604         MOVLW   11D                     ; TEST FOR NTQ106 TRANSMISSION
+00B6   0099           00605         SUBWF   CNT1,W                  ; IF CARRY FLAG SET (RX NOT OK)
+                      00606 
+00B7   0603           00607         BTFSC   STATUS,CARRY            ; CARRY SET IF FORMAT INVALID
+00B8   0800           00608         RETLW   0                       ; HERE IF NOT ALL BITS RECEIVED OK
+00B9   05BF           00609         BSF     FLAGS,NTQ106            ; INDICATE NTQ106 TX RECEIVED
+                      00610 
+                      00611 ; ***** ROTATE FOR ANOTHER 6 TIME TO LINE-UP CSR *****
+                      00612 
+00BA                  00613 RMT21
+00BA   0C06           00614         MOVLW   6H                      ; ADDITIONAL 6 BIT ROTATION REQUIRED
+00BB   01F9           00615         ADDWF   CNT1,1                  ; ADD TO WHAT LEFT IN COUNTER
+                      00616 
+00BC                  00617 RMT22
+00BC   0403           00618         CLRC
+00BD   090A           00619         CALL    ROT_SHIFT               ; COMPLETE 64-BIT SHIFT
+00BE   02F9           00620         DECFSZ  CNT1,1                  ; COMPLETE 64-BIT SHIFT
+00BF   0ABC           00621         GOTO    RMT22
+                      00622 
+00C0   07BF           00623         BTFSS   FLAGS,NTQ106            ; TEST FOR NTQ106 TRANSMISSION
+00C1   0AC4           00624         GOTO    RMT1
+00C2   0077           00625         CLRF    SER_0                   ; ... YES, THEN CLEAR UPPER BYTE OF SN
+00C3   006C           00626         CLRF    CSR8
+                      00627 
+00C4                  00628 RMT1    
+00C4   046F           00629         BCF     FLAGS1,BAT_LOW          ; CLEAR VLOW BIT
+00C5   060C           00630         BTFSC   CSR8,0                  ; TEST VLOW BIT IN TRANSMISSION
+00C6   056F           00631         BSF     FLAGS1,BAT_LOW          ; INDICATE TX BATERY LOW BIT SET
+00C7                  00632 RMT11
+                      00633 ;       BSF     PORTA,LED               ; VALID TRANSMISSION FORMAT, LED ON
+00C7   0000           00634         NOP
+                      00635           
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 13
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+00C8                  00636 RMT3
+00C8   0C0F           00637         MOVLW   0FH                     ; FORCE OPEN BUTTON CODES TO ZERO
+00C9   0177           00638         ANDWF   SER_0,1
+                      00639 
+00CA   0403           00640 RMT4    CLRC                            ; VALID SERIAL NUMBER => VALID TX
+00CB   0800           00641         RETLW   E_OK                    ; RETURN WITH 1
+                      00642 
+                      00643 ;**************************************************************************
+                      00644 ;
+                      00645 ; FUNCTION      : DECRYPT ()                            
+                      00646 ;
+                      00647 ; DESCRIPTION   : DECRYPTS 32 BIT [HOP1:HOP4] USING [CSR0:CSR7]
+                      00648 ;
+                      00649 ; PAGE          : 0 ( NOTE : MUST BE LOWER HALF OF PAGE )
+                      00650 ;
+                      00651 ;**************************************************************************
+00CC                  00652 DECRYPT
+00CC   0C0C           00653         MOVLW   11+1            ; OUTER LOOP 11+1 TIMES 
+00CD   0039           00654         MOVWF   CNT1            ; OUTER LOOP 11+1 TIMES 
+                      00655 
+00CE                  00656 DECRYPT_OUTER
+                      00657 
+00CE   0C30           00658         MOVLW   48              ; INNER LOOP 48 TIMES
+00CF   0038           00659         MOVWF   CNT0            ; INNER LOOP 48 TIMES
+                      00660 
+00D0                  00661 DECRYPT_INNER
+00D0   0004           00662         CLRWDT                  ; RESET WATCHDOG TIMER
+00D1   0219           00663         MOVFW   CNT1            ; LAST 48 LOOPS RESTORE THE KEY
+00D2   0F01           00664         XORLW   1               ; LAST 48 LOOPS RESTORE THE KEY
+00D3   0643           00665         BTFSC   STATUS,ZERO     ; LAST 48 LOOPS RESTORE THE KEY
+00D4   0AFA           00666         GOTO    ROTATE_KEY      ; LAST 48 LOOPS RESTORE THE KEY
+                      00667 
+                      00668         ; THE LOOKUP TABLE IS COMPRESSED INTO IN 4 BYTES TO SAVE SPACE
+                      00669         ; USE THE 3 LOW INDEX BITS TO MAKE UP AN 8-BIT BIT MASK
+                      00670         ; USE THE 2 HIGH INDEX BITS TO LOOK UP THE VALUE IN THE TABLE
+                      00671         ; USE THE BIT MASK TO ISOLATE THE CORRECT BIT IN THE BYTE
+                      00672         ; PART OF THE REASON FOR THIS SCHEME IS BECAUSE NORMAL TABLE LOOKUP
+                      00673         ; REQUIRES AN ADDITIONAL STACK LEVEL
+                      00674 
+00D5   0403           00675         CLRC                    ; CLEAR CARRY (FOR THE LEFT SHIFT)
+                      00676        
+00D6   0C01           00677         MOVLW   1               ; INITIALISE MASK = 1
+00D7   066A           00678         BTFSC   HOP3,3          ; SHIFT MASK 4X IF BIT 2 SET
+00D8   0C10           00679         MOVLW   10000B          ; SHIFT MASK 4X IF BIT 2 SET
+00D9   002E           00680         MOVWF   MASK            ; INITIALISE MASK = 1
+                      00681 
+00DA   0709           00682         BTFSS   HOP2,0          ; SHIFT MASK ANOTHER 2X IF BIT 1 SET
+00DB   0ADE           00683         GOTO    $+3
+00DC   036E           00684         RLF     MASK,F
+00DD   036E           00685         RLF     MASK,F            
+                      00686 
+00DE   0608           00687         BTFSC   HOP1,0          ; SHIFT MASK ANOTHER 1X IF BIT 0 SET
+00DF   036E           00688         RLF     MASK,F
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 14
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00689 
+                      00690         ; MASK HAS NOW BEEN SHIFTED 0-7 TIMES ACCORDING TO BITS 2:1:0
+                      00691 
+00E0   0C00           00692         MOVLW   0               ; TABLE INDEX = 0
+00E1   062B           00693         BTFSC   HOP4,1
+00E2   0D02           00694         IORLW   2               ; IF BIT 3 SET ADD 2 TO THE TABLE INDEX
+00E3   06CB           00695         BTFSC   HOP4,6
+00E4   0D04           00696         IORLW   4               ; IF BIT 4 SET ADD 4 TO THE TABLE INDEX
+                      00697 
+00E5   01E2           00698         ADDWF   PC,F            ; ADD THE INDEX TO THE PROGRAM COUNTER
+                      00699                                 ;  [ MUST BE IN LOWER HALF OF PAGE ]
+                      00700                                
+00E6                  00701 TABLE
+00E6   0C2E           00702         MOVLW   02EH            ; BITS 4:3 WERE 00
+00E7   0AED           00703         GOTO    TABLE_END       ; END OF LOOKUP
+                      00704 
+00E8   0C74           00705         MOVLW   074H            ; BITS 4:3 WERE 01
+00E9   0AED           00706         GOTO    TABLE_END       ; END OF LOOKUP
+                      00707 
+00EA   0C5C           00708         MOVLW   05CH            ; BITS 4:3 WERE 10
+00EB   0AED           00709         GOTO    TABLE_END       ; END OF LOOKUP
+                      00710 
+00EC   0C3A           00711         MOVLW   03AH            ; BITS 4:3 WERE 11
+                      00712                                  
+00ED                  00713 TABLE_END
+                      00714 
+00ED   016E           00715         ANDWF   MASK,F          ; ISOLATE THE CORRECT BIT BY ANDING WITH MASK
+00EE   0C00           00716         MOVLW   0               ; COPY THE BIT TO BIT 7
+00EF   0743           00717         BTFSS   STATUS,ZERO     ; COPY THE BIT TO BIT 7
+00F0   0C80           00718         MOVLW   10000000B       ; COPY THE BIT TO BIT 7
+                      00719 
+00F1   0189           00720         XORWF   HOP2,W          ; ONLY INTERESTED IN BIT HOP2,7
+00F2   018B           00721         XORWF   HOP4,W          ; ONLY INTERESTED IN BIT HOP4,7
+00F3   0190           00722         XORWF   KEY1,W          ; ONLY INTERESTED IN BIT KEYREG1,7
+                      00723 
+00F4   002E           00724         MOVWF   MASK            ; STORE W TEMPORARILY (WE NEED BIT 7)
+00F5   036E           00725         RLF     MASK,F          ; LEFT ROTATE MASK TO GET BIT 7 INTO THE CARRY
+                      00726 
+00F6   0368           00727         RLF     HOP1,F          ; SHIFT IN THE NEW BIT
+00F7   0369           00728         RLF     HOP2,F
+00F8   036A           00729         RLF     HOP3,F
+00F9   036B           00730         RLF     HOP4,F
+                      00731 
+00FA                  00732 ROTATE_KEY
+                      00733 
+00FA   0403           00734         CLRC                    ; CLEAR CARRY
+00FB   06F7           00735         BTFSC   KEY7,7          ; SET CARRY IF LEFTMOST BIT SET
+00FC   0503           00736         SETC                    ; SET CARRY IF LEFTMOST BIT SET
+                      00737 
+00FD   0371           00738         RLF     KEY0,F          ; LEFT-ROTATE THE 64-BIT KEY 
+00FE   0370           00739         RLF     KEY1,F
+00FF   0372           00740         RLF     KEY2,F
+0100   0373           00741         RLF     KEY3,F
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 15
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+0101   0374           00742         RLF     KEY4,F
+0102   0375           00743         RLF     KEY5,F
+0103   0376           00744         RLF     KEY6,F
+0104   0377           00745         RLF     KEY7,F         
+                      00746 
+0105   02F8           00747         DECFSZ  CNT0,F          ; INNER LOOP 48 TIMES
+0106   0AD0           00748         GOTO    DECRYPT_INNER   ; INNER LOOP 48 TIMES
+                      00749 
+0107   0906           00750         CALL    TST_RTCC
+0108   02F9           00751         DECFSZ  CNT1,F          ; OUTER LOOP 12 TIMES (11 + 1 TO RESTORE KEY)
+0109   0ACE           00752         GOTO    DECRYPT_OUTER   ; OUTER LOOP 12 TIMES (11 + 1 TO RESTORE KEY)
+                      00753 
+010A   0800           00754         RETLW   0               ; RETURN 
+                      00755 
+                      00756 ;**************************************************************************
+                      00757 ;
+                      00758 ; FUNCTION      : TST_RTCC ()                           
+                      00759 ;
+                      00760 ; DESCRIPTION   : TEST RTCC COUNTER AND UPDATE OUTPUT IF REQUIRED
+                      00761 ;
+                      00762 ; PAGE          : 0
+                      00763 ;
+                      00764 ;**************************************************************************
+                      00765 
+010B                  00766 TST_RTCC1
+010B   0004           00767         CLRWDT                          ; RESET WATCHDOG TIMER
+010C   0203           00768         MOVFW   STATUS
+010D   0181           00769         XORWF   RTCC,W
+010E   0E80           00770         ANDLW   080H
+                      00771 
+010F   0743           00772         BTFSS   STATUS,ZERO
+0110   0B12           00773         GOTO    TST_RTCC2               ; TEST FOR 32MS TIMEOUT ON RTCC MSB
+0111   0800           00774         RETLW   0H                      ; ... DO QUICK RETURN TO RECEIVE ROUTINE
+                      00775 
+                      00776 ; **** INCREASE 16 BIT CLOCK TIMER *******
+0112                  00777 TST_RTCC2
+0112   04E3           00778         BCF     STATUS,OVF
+0113   0201           00779         MOVFW   RTCC
+0114   0E80           00780         ANDLW   080H
+0115   0123           00781         IORWF   STATUS,F
+                      00782 
+0116   02BC           00783         INCF    CNT_LW,F                ; INCREASE 16 COUNTER
+0117   0643           00784         BTFSC   STATUS,ZERO             ; INCREASE UPPER BYTE IF ZERO ( OVERFLOW )
+0118   02BB           00785         INCF    CNT_HI,F
+                      00786 
+0119   05A4           00787         BSF     FSR,5                   ; SELECT RAM BANK 1
+011A   02B4           00788         INCF    CNT1_LW,F               ; INCREASE REPEAT DEBOUNCE TIMER
+011B   02B6           00789         INCF    CNT2_LW,F               ; INCREASE 2 SECOND PANIC TIMER
+011C   04A4           00790         BCF     FSR,5                   ; SELECT RAM BANK 0
+                      00791 
+011D   0C09           00792         MOVLW   RDCFG                   ; UPDATE TRI-STATE REGISTER FOR PORTA
+011E   0005           00793         TRIS    PORTA
+011F   0C00           00794         MOVLW   TRISB                   ; UPDATE TRI-STATE REGISTER FOR PORTB
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 16
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+0120   0006           00795         TRIS    PORTB
+0121   0CFF           00796         MOVLW   TRISC                   ; UPDATE TRI-STATE REGISTER FOR PORTC
+0122   0007           00797         TRIS    PORTC
+                      00798 
+                      00799         
+                      00800 ; *********** UPDATE LED IF REQUIRED ********
+0123                  00801 TST_LED 
+0123   077F           00802         BTFSS   FLAGS,LFLASH
+0124   0B2A           00803         GOTO    TST_PLIGHT
+                      00804 
+0125   079C           00805         BTFSS   CNT_LW,4                
+0126   0B29           00806         GOTO    TST_LED1
+                      00807 
+0127   05E6           00808         BSF     PORTB,LED               ; LED HIGH FOR 524MS                    
+0128   0B2A           00809         GOTO    TST_PLIGHT
+0129                  00810 TST_LED1
+0129   04E6           00811         BCF     PORTB,LED               ; LED LOW FOR 524MS
+                      00812 
+                      00813 ; *********** UPDATE PLIGHT IF REQUIRED ********
+012A                  00814 TST_PLIGHT
+                      00815 
+012A   079F           00816         BTFSS   FLAGS,PFLASH
+012B   0B31           00817         GOTO    TST_30
+                      00818 
+012C   079C           00819         BTFSS   CNT_LW,4
+012D   0B30           00820         GOTO    TST_PLIGHT1
+                      00821 
+012E   0546           00822         BSF     PORTB,PLIGHT            ; PLIGHT HIGH FOR 524MS
+012F   0B31           00823         GOTO    TST_30
+                      00824 
+0130                  00825 TST_PLIGHT1
+0130   0446           00826         BCF     PORTB,PLIGHT            ; PLIGHT LOW FOR 524MS
+                      00827 
+                      00828  ; ********* TEST FOR 30 S LEARN TIMEOUT *************
+0131   061F           00829 TST_30  BTFSC   FLAGS,NORMAL            ; TIMEOUT USE ONLY WITH LEARN
+0132   0B36           00830         GOTO    TST_RPT
+                      00831 
+0133   075B           00832         BTFSS   CNT_HI,2
+0134   0B36           00833         GOTO    TST_RPT                 ; TEST FOR LEARN TIMEOUT
+                      00834 
+0135   0BCD           00835         GOTO    WIPE_TX                 ; IF LEARN TIMEMOUT ABORT
+                      00836 
+                      00837  ; ********* TEST REPEAT TIMEOUT *************
+                      00838 
+0136                  00839 TST_RPT 
+0136   05A4           00840         BSF     FSR,5                   ; SELECT RAM BANK 1
+                      00841 
+0137   0794           00842         BTFSS   CNT1_LW,4
+0138   0B3B           00843         GOTO    TST_PANIC               ; REPEAT TIMEMOUT OF 0.5 SEC
+                      00844 
+0139   04A4           00845         BCF     FSR,5
+013A   04FF           00846         BCF     FLAGS,RPT
+                      00847 
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 17
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00848  ; ********* TEST PANIC TIMEOUT *************
+                      00849 
+013B                  00850 TST_PANIC
+013B   04A4           00851         BCF     FSR,5
+                      00852 
+013C   07FF           00853         BTFSS   FLAGS,RPT
+013D   0B47           00854         GOTO    TST_END
+                      00855 
+013E   05A4           00856         BSF     FSR,5
+013F   0C30           00857         MOVLW   48D                     ; PANIC TIME OF 2 SEC
+0140   0096           00858         SUBWF   CNT2_LW,W
+0141   0703           00859         BTFSS   STATUS,CARRY
+0142   0B47           00860         GOTO    TST_END
+0143   04A4           00861         BCF     FSR,5                   ; SELECT RAM BANK 0
+0144   04FF           00862         BCF     FLAGS,RPT
+0145   05C3           00863         BSF     STATUS,PA1              ; SELECT PAGE #2
+0146   0ABA           00864         GOTO    ALARM
+                      00865 
+0147                  00866 TST_END 
+0147   04A4           00867         BCF     FSR,5                   ; SELECT RAM BANK 0
+0148   0800           00868         RETLW   0H
+                      00869 
+                      00870 ;**************************************************************************
+                      00871 ;
+                      00872 ; FUNCTION      : TST_LEARN ()                          
+                      00873 ;
+                      00874 
+                      00875 ; DESCRIPTION   : TEST AND HANDLE LEARN BUTTON
+                      00876 ;
+                      00877 ; PAGE          : 0
+                      00878 ;
+                      00879 ;**************************************************************************
+0149                  00880 TST_LEARN1
+0149   0004           00881         CLRWDT                          ; RESET WATCHDOG TIMER
+014A   0767           00882         BTFSS   PORTC,LEARN             ; CHECK FOR LEARN BUTTON PRESSED
+014B   0800           00883         RETLW   0                       ; ... IF NOT RETURN
+014C   065F           00884         BTFSC   FLAGS,PASS2
+014D   0B6F           00885         GOTO    TST_LEARN7              ; ALREADY IN LEARN
+                      00886         
+014E                  00887 TST_LEARN2
+014E   0C42           00888         MOVLW   ALARMS                  ; CHECK IF IN ALARM STATE
+014F   019D           00889         XORWF   RAMS,W
+0150   0643           00890         BTFSC   STATUS,ZERO             ; ... NO,  CONTINUE
+0151   0800           00891         RETLW   0                       ; ... YES, RETURN
+                      00892 
+0152   007B           00893         CLRF    CNT_HI                  ; RESET EVENT COUNTER 
+0153   007C           00894         CLRF    CNT_LW
+0154   047F           00895         BCF     FLAGS,LFLASH            ; CLEAR LED FLASH MODE
+                      00896 
+0155                  00897 TST_LEARN3
+0155   0C80           00898         MOVLW   080H                    ; CHANGE LED STATE
+0156   01A6           00899         XORWF   PORTB,F                 ; USED TO FLASH LED AT 25KhZ
+0157   0906           00900         CALL    TST_RTCC                ; CALL RTCC UPDATE ROUTINE
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 18
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00901 
+0158   061B           00902         BTFSC   CNT_HI,0
+0159   0B5D           00903         GOTO    TST_LEARN4              ; TEST FOR ERASE TIMEMOUT ( 8.2 SEC )
+                      00904 
+015A   0767           00905         BTFSS   PORTC,LEARN
+015B   0B5F           00906         GOTO    TST_LEARN5              ; WAIT FOR LEARN BUTTON LIFT
+                      00907 
+015C   0B55           00908         GOTO    TST_LEARN3              ; ... IF NOT WAIT FOR LEARN KEY LIFT
+                      00909 
+015D                  00910 TST_LEARN4
+015D   05A3           00911         BSF     STATUS,PA0              ; SELECT PAGE #1
+015E   0A89           00912         GOTO    ERASE                   ; ERASE ALL LEARNED TRANSMITTERS
+                      00913 
+015F                  00914 TST_LEARN5
+                      00915 
+015F   063F           00916         BTFSC   FLAGS,PASS1
+0160   0B6F           00917         GOTO    TST_LEARN7              ; ALREADY IN LEARN
+                      00918 
+0161   0C02           00919         MOVLW   2
+0162   009C           00920         SUBWF   CNT_LW,W
+                      00921 
+0163   0603           00922         BTFSC   STATUS,CARRY
+0164   0B6B           00923         GOTO    TST_LEARN6              ; TEST IF LEARN PRESS LONGER THAN 64 MS
+                      00924 
+0165   0CA5           00925         MOVLW   ARMEDS                  ; CHECK IF IN ARMED STATE
+0166   019D           00926         XORWF   RAMS,W
+0167   0643           00927         BTFSC   STATUS,ZERO             ; ... NO,  CONTINUE
+0168   057F           00928         BSF     FLAGS,LFLASH            ; RESET FLASH FLAG
+                      00929 
+0169   04E6           00930         BCF     PORTB,LED
+016A   0800           00931         RETLW   0                       ; ... IF NOT ABORT LEARN
+                      00932 
+016B                  00933 TST_LEARN6
+016B   053F           00934         BSF     FLAGS,PASS1             ; INDICATE FIRST STATE OF LEARN
+016C   041F           00935         BCF     FLAGS,NORMAL            ; INDICATE FIRST STATE OF LEARN
+016D   045F           00936         BCF     FLAGS,PASS2
+016E   042F           00937         BCF     FLAGS1,S_RSTR           ; FLAGS MUST NOT BE RESTORED
+                      00938 
+016F                  00939 TST_LEARN7
+016F   05E6           00940         BSF     PORTB,LED               ; LED ON TO INDICATE LEARN ACTIVATED
+0170   0800           00941         RETLW   0H
+                      00942 
+                      00943 ;**************************************************************************
+                      00944 ;
+                      00945 ; FUNCTION      : SENDC ()                              
+                      00946 ;
+                      00947 
+                      00948 ; DESCRIPTION   : SEND EEPROM COMMAND 
+                      00949 ;
+                      00950 ; PAGE          : 0
+                      00951 ;
+                      00952 ;**************************************************************************
+0171                  00953 SENDC1
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 19
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+0171   0004           00954         CLRWDT                          ; RESET WATCHDOG TIMER
+                      00955 
+0172   0445           00956         BCF     PORTA,CS                ; RESET CS STATE
+0173   0425           00957         BCF     PORTA,CLK               ; RESET CLK STATE
+0174   0405           00958         BCF     PORTA,DIO               ; RESET DIO STATE
+                      00959 
+0175   0C08           00960         MOVLW   WRCFG
+0176   0005           00961         TRIS    PORTA                   ; DIO = OUTPUT
+0177   0B78           00962         GOTO    $+1                     ; WAIT FOR OUTPUTS TO SETTLE
+0178   0545           00963         BSF     PORTA,CS                ; SELECT EEPROM
+0179   0503           00964         SETC                            ; START BIT = 1
+017A   0C09           00965         MOVLW   9D                      ; START BIT + 8 DATA BITS
+017B   0039           00966         MOVWF   CNT1
+                      00967 
+017C                  00968 SENDC2
+017C   0703           00969         BTFSS   STATUS,CARRY            ; TEST BIT
+017D   0405           00970         BCF     PORTA,DIO               ; WRITE TO DIO
+017E   0603           00971         BTFSC   STATUS,CARRY            ; TEST BIT
+017F   0505           00972         BSF     PORTA,DIO               ; WRITE TO DIO
+0180   0B81           00973         GOTO    $+1                     ; WAIT 2 US
+0181   036E           00974         RLF     OUTBYT,F                ; GET NEXT BIT INTO CARRY
+0182   0525           00975         BSF     PORTA,CLK               ; CLOCK HIGH
+0183   0B84           00976         GOTO    $+1                     ; WAIT 2 US
+0184   0B85           00977         GOTO    $+1                     ; WAIT 2 US
+0185   0425           00978         BCF     PORTA,CLK               ; CLOCK LOW
+0186   02F9           00979         DECFSZ  CNT1,F                  ; LOOP COUNTER
+0187   0B7C           00980         GOTO    SENDC2
+0188   0405           00981         BCF     PORTA,DIO               ; AVOID CONTENTION WITH READ
+0189   0800           00982         RETLW   0
+                      00983 
+                      00984 ;**************************************************************************
+                      00985 ;
+                      00986 ; FUNCTION      : EEWRITE ()                            
+                      00987 ;
+                      00988 
+                      00989 ; DESCRIPTION   : ENCRYPT AND WRITE 16 BIT VALUE TO EEPROM 
+                      00990 ;
+                      00991 ; PAGE          : 0
+                      00992 ;
+                      00993 ;**************************************************************************
+018A                  00994 EEWRITE
+                      00995 ; ****** ENCRYPT 16-BIT WORD TO WRITE TO EEPROM ***************
+                      00996 
+018A                  00997 FNC
+018A   0C10           00998         MOVLW   16D                     ; 16 DATA BITS TO ENCRYPT
+018B   0039           00999         MOVWF   CNT1
+                      01000 
+018C                  01001 FNC2
+018C   0C07           01002         MOVLW   07H                     ; MASK ONLY LOWER 3 BITS
+018D   0150           01003         ANDWF   TMP1,W
+018E   002E           01004         MOVWF   OUTBYT                  ; TEMPORY STORE RESULT
+018F   0C08           01005         MOVLW   (EE_KEY-KEYBASE)        ; GET BASE ADDRES OF EEPROM KEY
+0190   01CE           01006         ADDWF   OUTBYT,W                ; ... AND ADD TO RESULT
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 20
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+0191   093F           01007         CALL    KEY_LOOKUP              ; GET BYTE FROM KEY LOOKUP TABLE
+0192   01B1           01008         XORWF   TMP2,F                   
+0193   0914           01009         CALL    ROTR                    ; ROTATE RIGHT 16 BIT WORD
+0194   02F9           01010         DECFSZ  CNT1,F
+0195   0B8C           01011         GOTO    FNC2
+                      01012 
+                      01013 ; ******* EEPROM WRITE ENABLE ******************
+0196                  01014 WRITE0  
+0196   0C30           01015         MOVLW   30H                     ; WRITE ENABLE COMMAND
+0197   002E           01016         MOVWF   OUTBYT                  
+0198   0904           01017         CALL    SENDC                   ; SEND COMMAND TO EEPROM
+0199   0445           01018         BCF     PORTA,CS                ; END COMMAND, DESELECT
+                      01019 
+                      01020 ; ******** WRITE 16-BIT WORD TO EEPROM *********
+019A                  01021 WRITE1  
+019A   020C           01022         MOVFW   ADDRESS                 ; GET EEPROM ADDRESS
+019B   002E           01023         MOVWF   OUTBYT
+019C   05CE           01024         BSF     OUTBYT,6                ; WRITE COMMAND
+019D   0904           01025         CALL    SENDC                   ; SEND COMMAND TO EEPROM
+                      01026 
+019E   0C10           01027         MOVLW   16D                     ; 16 DATA BITS
+019F   0039           01028         MOVWF   CNT1                    
+                      01029 
+01A0                  01030 WRITE2
+01A0   07F0           01031         BTFSS   TMP1,7                  ; TEST MSB OF 16 BIT WORD
+01A1   0405           01032         BCF     PORTA,DIO               ; CLEAR DATA BIT
+01A2   06F0           01033         BTFSC   TMP1,7                  ; ... ELSE 
+01A3   0505           01034         BSF     PORTA,DIO               ; SET DATA BIT
+01A4   0BA5           01035         GOTO    $+1                     ; WAIT 2 US
+01A5   0371           01036         RLF     TMP2,F                  ; SHIFT LO BYTE
+01A6   0525           01037         BSF     PORTA,CLK               ; CLOCK HIGH
+01A7   0BA8           01038         GOTO    $+1                     ; WAIT 2 US
+01A8   0370           01039         RLF     TMP1,F                  ; SHIFT HI BYTE
+01A9   0425           01040         BCF     PORTA,CLK               ; CLOCK LOW
+01AA   02F9           01041         DECFSZ  CNT1,F
+01AB   0BA0           01042         GOTO    WRITE2                  ; LOOP COUNTER
+01AC   0445           01043         BCF     PORTA,CS                ; END OF WRITE COMMAND, DESELECT
+                      01044 
+01AD   0C09           01045         MOVLW   RDCFG
+01AE   0005           01046         TRIS    PORTA                   ; DIO = INPUT
+01AF   0545           01047         BSF     PORTA,CS                ; CS HIGH TO WAIT FOR ACK
+01B0   0061           01048         CLRF    RTCC
+                      01049 
+01B1                  01050 WRITE5  
+01B1   06E1           01051         BTFSC   RTCC,7                  ; CHECK FOR TIMOUT
+01B2   0A00           01052         GOTO    RESET                   ; START OVER
+01B3   0004           01053         CLRWDT                          ; RESET WATCHDOG TIMER
+01B4   0705           01054         BTFSS   PORTA,DIO               ; CHECK FOR ACK RISING EDGE
+01B5   0BB1           01055         GOTO    WRITE5                  ; LOOP BACK
+                      01056 
+01B6   0445           01057 WRITE6  BCF     PORTA,CS                ; END OF ACK
+                      01058 
+                      01059 ; ******* EEPROM WRITE DISABLE ****************
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 21
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+01B7   0C00           01060         MOVLW   000H                    ; WRITE DISABLE COMMAND
+01B8   002E           01061         MOVWF   OUTBYT
+01B9   0904           01062         CALL    SENDC
+01BA   0445           01063         BCF     PORTA,CS                ; END OF DISABLE COMMAND, DESELECT
+                      01064 
+01BB   02AC           01065         INCF    ADDRESS,F               ; POINT TO NEXT EEPROM ADDRESS ( BY DEFAULT )
+01BC   0800           01066         RETLW   0H
+                      01067 
+                      01068 ;**************************************************************************
+                      01069 ;
+                      01070 ; FUNCTION      : LEARN_OK ()
+                      01071 ;
+                      01072 ; DESCRIPTION   : LED ON FOR 1 SEK [ INDICATE LEARN SUCCESSFUL ]
+                      01073 ;
+                      01074 ; PAGE          : 0
+                      01075 ;
+                      01076 ;**************************************************************************
+                      01077 
+01BD                  01078 LEARN_OK
+01BD   007C           01079         CLRF    CNT_LW                  ; CLEAR COUNTER
+01BE   05E6           01080         BSF     PORTB,LED               ; LED ON FOR 1 SEC
+                      01081 
+01BF                  01082 LEARN_OK2
+01BF   0906           01083         CALL    TST_RTCC                ; UPDATE COUNTER
+01C0   07BC           01084         BTFSS   CNT_LW,5                ; TEST FOR 1 SEC TIMEOUT
+01C1   0BBF           01085         GOTO    LEARN_OK2               ; LOOP BACK
+01C2   04E6           01086         BCF     PORTB,LED               ; LED OFF
+01C3   007C           01087         CLRF    CNT_LW
+01C4                  01088 LEARN_OK3
+01C4   0906           01089         CALL    TST_RTCC                ; UPDATE COUNTER                
+01C5   079C           01090         BTFSS   CNT_LW,4                ; TEST FOR 0.5S TIMEOUT
+01C6   0BC4           01091         GOTO    LEARN_OK3               ; LOOP BACK
+                      01092 
+01C7                  01093 LEARN_END
+01C7   051F           01094         BSF     FLAGS,NORMAL            ; SELECT NORMAL MODE    
+01C8   043F           01095         BCF     FLAGS,PASS1             ; CLEAR LEARN MODE
+01C9   045F           01096         BCF     FLAGS,PASS2             ; CLEAR LEARN MODE
+                      01097 
+01CA   052F           01098         BSF     FLAGS1,S_RSTR           ; RESTORE FLAGS
+                      01099          
+01CB   05A3           01100         BSF     STATUS,PA0              ; CONTINUE ON PAGE 1
+01CC   0B06           01101         GOTO    M_LOOP                  ; RETURN TO MAIN LOOP
+                      01102 
+                      01103 ;**************************************************************************
+                      01104 ;
+                      01105 ; FUNCTION      : WIPE_TX ()  
+                      01106 ;
+                      01107 ; DESCRIPTION   : WIPE CURRENT TX SERIAL NUMBER IN EEPROM
+                      01108 ;
+                      01109 ; PAGE          : 0
+                      01110 ;
+                      01111 ;**************************************************************************
+01CD                  01112 WIPE_TX 
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 22
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+01CD   0C01           01113         MOVLW   LRN_PTR                 ; POINT LEARN POINTER
+01CE   002C           01114         MOVWF   ADDRESS
+01CF   0920           01115         CALL    EEREAD                  ; READ LEARN POINTER WORD
+                      01116  
+01D0   0710           01117         BTFSS   TMP1,0                  ; BUSY LEARNING?
+01D1   0BE4           01118         GOTO    LEARN_NOK               ; .. NO, BYPASS TX WIPE
+                      01119 
+01D2   0391           01120         SWAPF   TMP2,W                  ; RECOVER PREVIOUS TX NUMBER
+01D3   0E07           01121         ANDLW   07H                     ; MASK ONLY LOWER 3 BITS
+                      01122 
+01D4   0070           01123         CLRF    TMP1                    ; RESET SELFLEARN POINTER 
+01D5   002D           01124         MOVWF   TXNUM                   ; ... TO CURRENT TXNUM
+01D6   0031           01125         MOVWF   TMP2
+                      01126 
+01D7   0C01           01127         MOVLW   LRN_PTR                 ; WRITE LEARN POINTER
+01D8   002C           01128         MOVWF   ADDRESS
+01D9   0907           01129         CALL    EE_WRITE0               ; UPDATE EEPROM
+                      01130 
+01DA                  01131 WIPE_TX1
+01DA   05A3           01132         BSF     STATUS,PA0              ; CALL TO PAGE 1
+01DB   0908           01133         CALL    TX_LOOKUP               ; TO GET BASE ADDRESS OF TX
+01DC   04A3           01134         BCF     STATUS,PA0              ; RETURN TO PAGE 0
+01DD   052C           01135         BSF     ADDRESS,1               ; ADD 2 TO BASE ADDRESS
+01DE   0070           01136         CLRF    TMP1                    ; SET VALUE TO ZERO
+01DF   0071           01137         CLRF    TMP2
+01E0   0907           01138         CALL    EE_WRITE0               ; CLEAR LOWER 16 BITS
+01E1   0070           01139         CLRF    TMP1                    ; SET VALUE TO ZERO
+01E2   0071           01140         CLRF    TMP2
+01E3   0907           01141         CALL    EE_WRITE0               ; CLEAR UPPER 16 BITS
+                      01142 
+                      01143 ;**************************************************************************
+                      01144 ;
+                      01145 ; FUNCTION      : LEARN_NOK ()
+                      01146 ;
+                      01147 ; DESCRIPTION   : LED ON FOR 0.1 SEC [ INDICATE LEARN SUCCESSFUL ]
+                      01148 ;
+                      01149 ; PAGE          : 0
+                      01150 ;
+                      01151 ;**************************************************************************
+                      01152 
+01E4                  01153 LEARN_NOK
+01E4   052F           01154         BSF     FLAGS1,S_RSTR           ; RESTORE FLAGS
+01E5   043F           01155         BCF     FLAGS,PASS1
+01E6   045F           01156         BCF     FLAGS,PASS2
+01E7   051F           01157         BSF     FLAGS,NORMAL            ; SELECT NORMAL MODE
+01E8   04DF           01158         BCF     FLAGS,RESYNC            ; RESET RESYNC FLAG
+                      01159 
+01E9   007C           01160         CLRF    CNT_LW                  ; CLEAR COUNTER
+01EA   05E6           01161         BSF     PORTB,LED               ; LED ON FOR 0.1 SEC
+                      01162 
+01EB                  01163 LEARN_NOK2
+01EB   0906           01164         CALL    TST_RTCC                ; UPDATE COUNTER
+                      01165         
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 23
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+01EC   075C           01166         BTFSS   CNT_LW,2                ; CHECK FOR 100MS TIMEOUT
+01ED   0BEB           01167         GOTO    LEARN_NOK2
+01EE   04E6           01168         BCF     PORTB,LED               ; LED OFF
+                      01169 
+01EF   007C           01170         CLRF    CNT_LW
+01F0                  01171 LEARN_NOK3
+01F0   0906           01172         CALL    TST_RTCC                ; UPDATE COUNTER                
+01F1   079C           01173         BTFSS   CNT_LW,4                ; TEST FOR 0.5S TIMEOUT
+01F2   0BF0           01174         GOTO    LEARN_NOK3              ; LOOP BACK
+                      01175 
+01F3   074F           01176         BTFSS   FLAGS1,ENTRY            
+01F4   0A08           01177         GOTO    M_LOOP0                 ; RETURN TO MAIN LOOP
+01F5   05A3           01178         BSF     STATUS,PA0              ; GOTO PAGE 1
+01F6   0AC1           01179         GOTO    MAIN                    ; RETURN TO STATUS READ
+                      01180 
+                      01181 ;**************************************************************************
+                      01182 ; PAGE 1:
+                      01183 ;**************************************************************************
+0200                  01184         ORG     200H
+                      01185 
+                      01186 ;**************************************************************************
+                      01187 ; CALLS TO FIRST PAGE
+                      01188 ;**************************************************************************
+                      01189 
+0200   04A3           01190 RESET1  BCF     STATUS,PA0              ; SELECT PAGE #0
+0201   0A00           01191         GOTO    RESET                   ; GOTO RESET
+                      01192 
+0202                  01193 EE_READ1
+0202   04A3           01194         BCF     STATUS,PA0              ; SELECT PAGE #0
+0203   0A20           01195         GOTO    EEREAD                  ; CALL EEPROM READ ROUTINE
+                      01196 
+0204                  01197 EE_CLEAR1
+0204   0070           01198         CLRF    TMP1                    ; CLEAR UPPER 16 BITS
+0205   0071           01199         CLRF    TMP2                    ; ... AND THEN WRITE TO EEPROM
+                      01200 
+0206                  01201 EE_WRITE1
+0206   04A3           01202         BCF     STATUS,PA0              ; SELECT PAGE #0
+0207   0B8A           01203         GOTO    EEWRITE                 ; CALL EEPROM WRITE ROUTINE
+                      01204 
+                      01205 ;**************************************************************************
+                      01206 ;
+                      01207 ; FUNCTION      : TX_LOOKUP ()                          
+                      01208 ;
+                      01209 ; DESCRIPTION   : TRANSMITTER MEMORY LOOKUP TABLE
+                      01210 ;
+                      01211 ; PAGE          : 1     ( NOTE : MUST BE LOWER HALF OF PAGE )
+                      01212 ;
+                      01213 ;**************************************************************************
+0208                  01214 TX_LOOKUP
+0208   090B           01215         CALL    TX_LOOKUP2              ; GET VALUE FROM LOOKUP TABLE BELOW
+0209   002C           01216         MOVWF   ADDRESS                 ; STORE VALUE IN ADDRESS REGISTER
+020A   0800           01217         RETLW   0
+                      01218 
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 24
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      01219 ; ****** LOOKUP TABLE WITH BASE ADDRESS OF TRANSMITTERS ************
+                      01220         
+020B                  01221 TX_LOOKUP2
+020B   020D           01222         MOVFW   TXNUM                   ; GET CURRENT TRANSMITTER
+020C   01E2           01223         ADDWF   PC,1
+020D   0810           01224         RETLW   10H                     ; TX0 BASE ADDRESS 
+020E   0818           01225         RETLW   18H                     ; TX1 BASE ADDRESS
+020F   0820           01226         RETLW   20H                     ; TX2 BASE ADDRESS
+0210   0828           01227         RETLW   28H                     ; TX3 BASE ADDRESS
+0211   0830           01228         RETLW   30H                     ; TX4 BASE ADDRESS
+0212   0838           01229         RETLW   38H                     ; TX5 BASE ADDRESS
+                      01230 
+                      01231 ;**************************************************************************
+                      01232 ;
+                      01233 ; FUNCTION      : BUT_LOOKUP ()                         
+                      01234 ;
+                      01235 ; DESCRIPTION   : TRANSMITTER BUTTON LOOKUP TABLE
+                      01236 ;
+                      01237 ; PAGE          : 1     ( NOTE : MUST BE LOWER HALF OF PAGE )
+                      01238 ;
+                      01239 ;**************************************************************************
+0213                  01240 BUT_LOOKUP
+0213   020D           01241         MOVFW   TXNUM                   ; GET CURRENT TRANSMITTER
+0214   01E2           01242         ADDWF   PC,1
+0215   080A           01243         RETLW   0AH                     ; TX0 BUTTON CODE ADDRESS
+0216   080B           01244         RETLW   0BH                     ; TX1 BUTTON CODE ADDRESS
+0217   080C           01245         RETLW   0CH                     ; TX2 BUTTON CODE ADDRESS
+0218   080D           01246         RETLW   0DH                     ; TX3 BUTTON CODE ADDRESS
+0219   080E           01247         RETLW   0EH                     ; TX4 BUTTON CODE ADDRESS
+021A   080F           01248         RETLW   0FH                     ; TX5 BUTTON CODE ADDRESS
+                      01249 
+                      01250 ;**************************************************************************
+                      01251 ;
+                      01252 ; FUNCTION      : KEYGEN ()                             
+                      01253 ;
+                      01254 ; DESCRIPTION   : GENERATE A KEY USING MASTER KEY ( ADDR 40H IN ROM )
+                      01255 ;
+                      01256 ; PAGE          : 1
+                      01257 ;
+                      01258 ;**************************************************************************
+021B                  01259 KEYGEN
+021B   0C17           01260         MOVLW   KEY7                    ; POINT TO FIRST KEY BYTE
+021C   0024           01261         MOVWF   FSR
+                      01262 
+021D   0C07           01263         MOVLW   (MAS_KEY-KEYBASE+7)     ; GET TABLE MSB OFFSET FOR MASTER KEY
+021E   0039           01264         MOVWF   CNT1
+                      01265 
+021F   0C08           01266         MOVLW   8H                      ; INDICATE 8 BYTE TO READ FROM LOOKUP TABLE
+0220   0038           01267         MOVWF   CNT0                    ; BYTE COUNTER
+                      01268 
+0221                  01269 KEYGEN2
+0221   04A3           01270         BCF     STATUS,PA0              ; SELECT PAGE #0
+0222   0219           01271         MOVFW   CNT1
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 25
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+0223   093F           01272         CALL    KEY_LOOKUP              ; GET BYTE FROM LOOKUP TABLE
+0224   0020           01273         MOVWF   IND                     ; STORE BYTE IN KEY BYTE
+0225   00E4           01274         DECF    FSR,F                   ; POINT TO NEXT ENTRY IN CIRCULAR BUFFER
+0226   00F9           01275         DECF    CNT1,F                  ; POINT TO NEXT ENTRY IN KEY LOOKUP TABLE
+0227   05A3           01276         BSF     STATUS,PA0              ; RE-SELECT PAGE #1
+0228   02F8           01277         DECFSZ  CNT0,F                  ; ALL BYTES READ
+0229   0A21           01278         GOTO    KEYGEN2                 ; ... NO THEN READ NEXT BYTE
+022A   0211           01279         MOVFW   KEY0                    ; SWAP KEY1 AND KEY0 
+022B   002E           01280         MOVWF   OUTBYT                  ; NOTE : THIS MUST BE DONE BECAUSE THE TMP1 & TMP2
+022C   0210           01281         MOVFW   KEY1                    ;        ( KEY0 & KEY1 ) REGISTERS IS ALSO USED 
+022D   0031           01282         MOVWF   KEY0                    ;        DURING DECRYPTION ( KEYGEN )
+022E   020E           01283         MOVFW   OUTBYT
+022F   0030           01284         MOVWF   KEY1
+                      01285 
+0230   04A3           01286         BCF     STATUS,PA0              ; SELECT PAGE #0
+0231   09CC           01287         CALL    DECRYPT                 ; DECRYPT 32 BIT USING MASTER KEY
+0232   05A3           01288         BSF     STATUS,PA0              ; RE-SELECT PAGE #1
+                      01289         
+0233   0209           01290         MOVFW   HOP2                    ; GET LOWER 16 BIT OF DECRYPTED WORD
+0234   0030           01291         MOVWF   TMP1                    
+0235   0208           01292         MOVFW   HOP1
+0236   0031           01293         MOVWF   TMP2
+0237   0906           01294         CALL    EE_WRITE1               ; ... AND WRITE TO EEPROM 
+0238   05A3           01295         BSF     STATUS,PA0              ; RE-SELECT PAGE #1
+                      01296 
+0239   020B           01297         MOVFW   HOP4                    ; GET UPPER 16 BIT OF DECRYPTED WORD
+023A   0030           01298         MOVWF   TMP1
+023B   020A           01299         MOVFW   HOP3
+023C   0031           01300         MOVWF   TMP2
+023D   0906           01301         CALL    EE_WRITE1               ; ... AND WRITE TO EEPROM
+023E   05A3           01302         BSF     STATUS,PA0              ; RE-SELECT PAGE #1
+                      01303 
+023F   062C           01304         BTFSC   ADDRESS,1               ; TEST IF FIRST 32 BIT OF KEY GENERATED
+0240   0A66           01305         GOTO    S_SEED2                 ; ... IF SO GENERATE SECOND 32 BITS
+0241   0A7C           01306         GOTO    CALC_END                ; ... ELSE KEYGEN COMPLETE
+                      01307 
+                      01308 ;**************************************************************************
+                      01309 ;
+                      01310 ; FUNCTION      : CALC_KEY ()                           
+                      01311 ;
+                      01312 ; DESCRIPTION   : CALCULATE NEW KEY FROM RECEIVED SERIAL NUMBER
+                      01313 ;
+                      01314 ; PAGE          : 1
+                      01315 ;
+                      01316 ;**************************************************************************
+0242                  01317 CALC_KEY
+0242   05A4           01318         BSF     FSR,5
+0243   0208           01319         MOVFW   HOP1                    ; STORE 32 BIT HOPCODE IN THE EXTENDED TEMP BUFFER
+0244   0030           01320         MOVWF   ETMP1                   
+0245   0209           01321         MOVFW   HOP2
+0246   0031           01322         MOVWF   ETMP2
+0247   020A           01323         MOVFW   HOP3
+0248   0032           01324         MOVWF   ETMP3
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 26
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+0249   020B           01325         MOVFW   HOP4
+024A   0033           01326         MOVWF   ETMP4
+024B   04A4           01327         BCF     FSR,5
+                      01328 
+024C   0908           01329         CALL    TX_LOOKUP               ; GET TRANSMITTER BASE ADDRESS
+024D   052C           01330         BSF     ADDRESS,1               ; ADD 2 TO BASE ADDRESS
+                      01331 
+024E   0215           01332         MOVFW   SER_2                   ; GET LOWER 16 BIT OF SERIAL NUMBER
+024F   0030           01333         MOVWF   TMP1
+0250   0214           01334         MOVFW   SER_3
+0251   0031           01335         MOVWF   TMP2
+0252   0906           01336         CALL    EE_WRITE1               ; ... AND WRITE TO EEPROM
+0253   05A3           01337         BSF     STATUS,PA0              ; RE-SELECT PAGE #1
+                      01338         
+0254   0217           01339         MOVFW   SER_0                   ; GET UPPER 16 BIT OF SERIAL NUMBER
+0255   0030           01340         MOVWF   TMP1
+0256   0216           01341         MOVFW   SER_1
+0257   0031           01342         MOVWF   TMP2
+0258   0906           01343         CALL    EE_WRITE1               ; ... AND WRITE TO EEPROM
+0259   05A3           01344         BSF     STATUS,PA0              ; RE-SELECT PAGE #1
+                      01345 
+025A                  01346 S_SEED1 
+025A   0C20           01347         MOVLW   20H                     ; PATCH IF TRANSMITTER IS A HCS360 / HCS300
+025B   06BF           01348         BTFSC   FLAGS,NTQ106            
+025C   0C2B           01349         MOVLW   2BH                     ; PATCH IF TRANSMITTER IS A NTQ106 / NTQ105
+025D   0117           01350         IORWF   SER_0,W
+025E   002B           01351         MOVWF   DAT1
+                      01352 
+025F   0216           01353         MOVFW   SER_1                   ; GET SERIAL NUMBER FROM RECEIVER BUFFER
+0260   002A           01354         MOVWF   DAT2
+0261   0215           01355         MOVFW   SER_2
+0262   0029           01356         MOVWF   DAT3
+0263   0214           01357         MOVFW   SER_3
+0264   0028           01358         MOVWF   DAT4
+0265   0A1B           01359         GOTO    KEYGEN                  ; GENERATE FIRST 32 KEY BITS
+                      01360 
+0266                  01361 S_SEED2 
+0266   0908           01362         CALL    TX_LOOKUP               ; GET TRANSMITTER BASE ADDRESS
+0267   052C           01363         BSF     ADDRESS,1               ; ADD 2 TO BASE ADDRESS
+0268   0902           01364         CALL    EE_READ1                ; READ LOWER 16 BITS OF SERIAL NUMBER FROM EEPROM
+0269   05A3           01365         BSF     STATUS,PA0              ; SELECT PAGE #1
+026A   0210           01366         MOVFW   TMP1
+026B   0029           01367         MOVWF   DAT3
+026C   0211           01368         MOVFW   TMP2
+026D   0028           01369         MOVWF   DAT4
+                      01370 
+026E   02AC           01371         INCF    ADDRESS,F                       
+026F   0902           01372         CALL    EE_READ1                ; READ UPPER 16 BITS OF SERIAL NUMBER FROM EEPROM
+0270   05A3           01373         BSF     STATUS,PA0              ; SELECT PAGE #1
+0271   0C60           01374         MOVLW   60H                     ; PATCH IF TRANSMITTER IS A HCS360 / HCS300
+0272   06BF           01375         BTFSC   FLAGS,NTQ106            
+0273   0C65           01376         MOVLW   65H                     ; PATCH IF TRANSMITTER IS A NTQ106 / NTQ105
+0274   0110           01377         IORWF   TMP1,W
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 27
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+0275   002B           01378         MOVWF   DAT1
+0276   0211           01379         MOVFW   TMP2                    
+0277   002A           01380         MOVWF   DAT2
+                      01381 
+0278   02AC           01382         INCF    ADDRESS,F               ; POINT TO UPPER 32 BITS OF KEY
+0279   02AC           01383         INCF    ADDRESS,F
+027A   02AC           01384         INCF    ADDRESS,F
+027B   0A1B           01385         GOTO    KEYGEN                  ; GENERATE SECOND 32 KEY BITS
+                      01386 
+027C                  01387 CALC_END
+027C   05A4           01388         BSF     FSR,5
+027D   0210           01389         MOVFW   ETMP1                   ; RECOVER 32 BIT HOPCODE FROM EXTENDED BUFFER
+027E   0028           01390         MOVWF   HOP1
+027F   0211           01391         MOVFW   ETMP2
+0280   0029           01392         MOVWF   HOP2
+0281   0212           01393         MOVFW   ETMP3
+0282   002A           01394         MOVWF   HOP3
+0283   0213           01395         MOVFW   ETMP4
+0284   002B           01396         MOVWF   HOP4
+0285   04A4           01397         BCF     FSR,5
+                      01398 
+0286   007B           01399         CLRF    CNT_HI                  ; RESET EVENT CLOCK
+0287   007C           01400         CLRF    CNT_LW
+0288   0B46           01401         GOTO    M_HOP
+                      01402 
+                      01403 ;**************************************************************************
+                      01404 ;
+                      01405 ; FUNCTION      : ERASE ()
+                      01406 ;
+                      01407 ; DESCRIPTION   : ERASE ALL TRANSMITTERS
+                      01408 ;
+                      01409 ; PAGE          : 1
+                      01410 ;
+                      01411 ;**************************************************************************
+0289                  01412 ERASE         
+0289   052F           01413         BSF     FLAGS1,S_RSTR           ; FLAGS MUST BE RESTORED
+028A   05E6           01414         BSF     PORTB,LED               ; SET LED ON
+                      01415         
+028B   0C01           01416         MOVLW   1H                      ; POINT TO LEARN POINTER ADDRESS
+028C   002C           01417         MOVWF   ADDRESS
+028D   0904           01418         CALL    EE_CLEAR1               ; 
+028E   05A3           01419         BSF     STATUS,PA0              ; SELECT PAGE 1
+                      01420 
+028F   006D           01421         CLRF    TXNUM                   ; POINT TO FIRST TRANSMITTER POSISTION IN EEPROM
+0290                  01422 ERASE2
+0290   0908           01423         CALL    TX_LOOKUP               ; GET TX BASE ADRESS
+0291   052C           01424         BSF     ADDRESS,1               ; ADD 2 TO BASE ADDRESS
+                      01425 
+0292   0904           01426         CALL    EE_CLEAR1               ; CLEAR LOWER 16 BITS OF SERIAL NUMBER
+0293   05A3           01427         BSF     STATUS,PA0              ; SELECT PAGE 1
+0294   0904           01428         CALL    EE_CLEAR1               ; CLEAR UPPER 16 BITS OF SERIAL NUMBER
+0295   05A3           01429         BSF     STATUS,PA0              ; SELECT PAGE 1
+                      01430 
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 28
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+0296   02AD           01431         INCF    TXNUM,F                 ; POINT TO NEXT EEPROM INDEX
+0297   0C06           01432         MOVLW   6H                      ; TEST FOR LAST POSITION
+0298   008D           01433         SUBWF   TXNUM,W
+0299   0703           01434         BTFSS   STATUS,CARRY            ; IF NOT UPDATE NEXT ENTRY
+029A   0A90           01435         GOTO    ERASE2
+029B   04E6           01436         BCF     PORTB,LED               ; LED OFF TO INDICATE ERASE ALL COMPLETE
+                      01437 
+029C                  01438 M_ERASE3
+029C   0004           01439         CLRWDT                          ; RESET WATCHDOG TIMER
+029D   0667           01440         BTFSC   PORTC,LEARN             ; WAIT FOR BUTTON LIFT
+029E   0A9C           01441         GOTO    M_ERASE3         
+029F   0B06           01442         GOTO    M_LOOP                  ; RETURN TO MAIN PROGRAM FLOW
+                      01443 
+                      01444 ;**************************************************************************
+                      01445 ;
+                      01446 ; FUNCTION      : READ_KEY ()                           
+                      01447 ;
+                      01448 ; DESCRIPTION   : READ 64 BIT KEY FROM EEPROM [CSR0:CSR7] 
+                      01449 ;
+                      01450 ; PAGE          : 1
+                      01451 ;
+                      01452 ;**************************************************************************
+02A0                  01453 READ_KEY
+02A0   0C03           01454         MOVLW   3H                      ; POINT TO MSB OF KEY
+02A1   01EC           01455         ADDWF   ADDRESS,1       
+                      01456 
+02A2   0C17           01457         MOVLW   KEY7                    ; POINT TO LSB OF 64 BIT SHIFT REGISTER
+02A3   0024           01458         MOVWF   FSR     
+02A4   0C03           01459         MOVLW   3H                      ; READ 3 x 16BIT VALUES FROM EEPROM
+02A5   003A           01460         MOVWF   CNT2
+                      01461 
+02A6                  01462 READ_KEY2
+02A6   0902           01463         CALL    EE_READ1                ; READ LOWER 16 BITS
+02A7   05A3           01464         BSF     STATUS,PA0              ; SELECT PAGE #1
+02A8   0210           01465         MOVFW   TMP1                    ; GET UPPER 8 BITS
+02A9   0020           01466         MOVWF   IND                     ; STORE FIRST 8 BITS IN 64 BIT SHIFT REGISTER
+02AA   00E4           01467         DECF    FSR,F                   ; POINT TO NEXT BYTE IN SHIFT REGISTER
+02AB   0211           01468         MOVFW   TMP2                    ; GET LOWER 8 BITS
+02AC   0020           01469         MOVWF   IND                     ; STORE SECOND 8 BITS IN 64 BIT SHIFT REGISTER
+02AD   00E4           01470         DECF    FSR,F                   ; POINT TO NEXT BYTE IN SHIFT REGISTER
+02AE   00EC           01471         DECF    ADDRESS                 ; POINT TO NEXT EEPROM ADDRESS
+02AF   02FA           01472         DECFSZ  CNT2,F                  ; ALL THREE 16-BIT WORDS READ
+02B0   0AA6           01473         GOTO    READ_KEY2               ; ... IF NOT GET NEXT 
+                      01474 
+02B1   0902           01475         CALL    EE_READ1                ; READ LOWER 16 BITS
+02B2   05A3           01476         BSF     STATUS,PA0              ; SELECT PAGE #1
+02B3   0B49           01477         GOTO    M_DEC                   ; RETURN TO MAIN PROGRAM LOOP
+                      01478 
+                      01479 ;**************************************************************************
+                      01480 ;
+                      01481 ; FUNCTION      : MAIN ()                               
+                      01482 ;
+                      01483 ; DESCRIPTION   : MAIN PROGRAM ROUTINE
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 29
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      01484 ;
+                      01485 ; PAGE          : 1
+                      01486 ;
+                      01487 ;**************************************************************************
+                      01488 
+02B4                  01489 RESET_P1
+02B4   0064           01490         CLRF    FSR                     ; POINT TO RAM PAGE 0           
+                      01491 
+02B5   0065           01492         CLRF    PORTA                   ; RESET PORTA
+02B6   0066           01493         CLRF    PORTB                   ; RESET PORTB
+02B7   0067           01494         CLRF    PORTC                   ; RESET PORTC
+                      01495 
+02B8   0C09           01496         MOVLW   TRISA                   ; UPDATE TRI-STATE REGISTER FOR PORTA
+02B9   0005           01497         TRIS    PORTA
+02BA   0C00           01498         MOVLW   TRISB                   ; UPDATE TRI-STATE REGISTER FOR PORTB
+02BB   0006           01499         TRIS    PORTB
+02BC   0CFF           01500         MOVLW   TRISC                   ; UPDATE TRI-STATE REGISTER FOR PORTC
+02BD   0007           01501         TRIS    PORTC
+                      01502 
+02BE   007F           01503         CLRF    FLAGS                   ; RESET FLAGS
+02BF   006F           01504         CLRF    FLAGS1                  ; RESET FLAGS
+                      01505 
+02C0   054F           01506         BSF     FLAGS1,ENTRY            ; SET ENTRY FLAG
+                      01507 
+02C1                  01508 MAIN
+02C1   051F           01509         BSF     FLAGS,NORMAL            ; INDICATE NORMAL PROGRAM FLOW
+02C2   043F           01510         BCF     FLAGS,PASS1
+02C3   045F           01511         BCF     FLAGS,PASS2
+                      01512 
+02C4   0C01           01513         MOVLW   LRN_PTR                 ; POINT LEARN POINTER
+02C5   002C           01514         MOVWF   ADDRESS              
+02C6   0902           01515         CALL    EE_READ1                ; READ LEARN POINTER WORD
+02C7   05A3           01516         BSF     STATUS,PA0              ; SELECT PAGE #1
+                      01517 
+02C8   0710           01518         BTFSS   TMP1,0
+02C9   0AD4           01519         GOTO    MAIN2                   ; UPPER BIT OF SELFLEARN NIBBLE MUST BE ZERO
+                      01520 
+02CA   0391           01521         SWAPF   TMP2,W                  ; RECOVER PREVIOUS TX NUMBER
+02CB   0E07           01522         ANDLW   07H                     ; MASK ONLY LOWER 3 BITS
+                      01523 
+02CC   0070           01524         CLRF    TMP1                    ; RESET SELFLEARN POINTER 
+02CD   002D           01525         MOVWF   TXNUM                   ; ... TO CURRENT TXNUM
+02CE   0031           01526         MOVWF   TMP2
+                      01527 
+02CF   0C01           01528         MOVLW   LRN_PTR                 ; WRITE LEARN POINTER
+02D0   002C           01529         MOVWF   ADDRESS
+02D1   0906           01530         CALL    EE_WRITE1               ; UPDATE EEPROM
+02D2   04A3           01531         BCF     STATUS,PA0
+02D3   0BDA           01532         GOTO    WIPE_TX1                ; WIPE TRANSMITTER ( SELFLEARN UNSUCCESFUL )
+                      01533 
+02D4                  01534 MAIN2
+                      01535 
+02D4   044F           01536         BCF     FLAGS1,ENTRY            ; CLEAR ENTRY FLAG      
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 30
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      01537         
+                      01538 
+02D5                  01539 MAIN3   
+02D5   0C02           01540         MOVLW   SSTATUS                 ; POINT STATUS
+02D6   002C           01541         MOVWF   ADDRESS
+02D7   0902           01542         CALL    EE_READ1                ; READ STATUS
+02D8   05A3           01543         BSF     STATUS,PA0              ; SELECT PAGE #1
+                      01544 
+02D9   0C8B           01545         MOVLW   X2                      ; CHECK FOR VALID STATUS WRITE
+02DA   0191           01546         XORWF   TMP2,W
+02DB   0643           01547         BTFSC   STATUS,ZERO
+02DC   0AE8           01548         GOTO    MAIN4                   ; VALID STATUS  
+                      01549 
+                      01550         ; HERE IF STATUS NOT VALID
+                      01551 
+02DD   0C03           01552         MOVLW   BSTATUS                 ; POINT TO BACKUP COPY
+02DE   002C           01553         MOVWF   ADDRESS
+02DF   0902           01554         CALL    EE_READ1
+02E0   05A3           01555         BSF     STATUS,PA0              ; READ BACKUP STATUS COPY
+                      01556 
+02E1   0CC7           01557         MOVLW   X1
+02E2   0191           01558         XORWF   TMP2,W                  ; CHECK FOR VALID WRITE
+02E3   0643           01559         BTFSC   STATUS,ZERO
+02E4   0AE8           01560         GOTO    MAIN4                   ; VALID BACKUP STATUS
+                      01561 
+                      01562         ; HERE IF BACKUP ALSO CORRUPTED
+                      01563 
+02E5   04A3           01564         BCF     STATUS,PA0              ; GOTO ARMED STATE
+02E6   05C3           01565         BSF     STATUS,PA1
+02E7   0A10           01566         GOTO    ARMED                   ; 
+                      01567 
+02E8                  01568 MAIN4
+02E8   0C5A           01569         MOVLW   DRIVES
+02E9   0190           01570         XORWF   TMP1,W
+02EA   0743           01571         BTFSS   STATUS,ZERO
+02EB   0AEF           01572         GOTO    MAIN5
+02EC   04A3           01573         BCF     STATUS,PA0
+02ED   05C3           01574         BSF     STATUS,PA1
+02EE   0A47           01575         GOTO    DRIVE
+                      01576 
+02EF                  01577 MAIN5
+02EF   0C42           01578         MOVLW   ALARMS
+02F0   0190           01579         XORWF   TMP1,W
+02F1   0743           01580         BTFSS   STATUS,ZERO
+02F2   0AF6           01581         GOTO    MAIN6
+02F3   04A3           01582         BCF     STATUS,PA0
+02F4   05C3           01583         BSF     STATUS,PA1
+02F5   0ABA           01584         GOTO    ALARM
+                      01585 
+02F6                  01586 MAIN6
+02F6   0C3C           01587         MOVLW   IMMOBS
+02F7   0190           01588         XORWF   TMP1,W
+02F8   0743           01589         BTFSS   STATUS,ZERO
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 31
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+02F9   0AFD           01590         GOTO    MAIN7
+02FA   04A3           01591         BCF     STATUS,PA0
+02FB   05C3           01592         BSF     STATUS,PA1
+02FC   0A95           01593         GOTO    IMMOB
+                      01594 
+02FD                  01595 MAIN7
+02FD   04A3           01596         BCF     STATUS,PA0
+02FE   05C3           01597         BSF     STATUS,PA1
+02FF   0A10           01598         GOTO    ARMED
+                      01599         
+0300                  01600 M_CHECK 
+0300   04A3           01601         BCF     STATUS,PA0              ; CLEAR PAGE BIT #0
+0301   0905           01602         CALL    TST_LEARN               ; TEST & HANDLE LEARN BUTTON
+0302   0950           01603         CALL    RECEIVE                 ; RECEIVE TRANSMISSION 
+0303   05A3           01604         BSF     STATUS,PA0              ; SET PAGE BIT #0
+                      01605 
+0304   0703           01606         BTFSS   STATUS,CARRY
+0305   0B0C           01607         GOTO    M_ZERO
+0306                  01608 M_LOOP
+0306   04A3           01609         BCF     STATUS,PA0
+0307   05C3           01610         BSF     STATUS,PA1      
+0308   0C02           01611         MOVLW   2
+0309   01DE           01612         ADDWF   STACK,W
+030A   0503           01613         BSF     STATUS,CARRY
+030B   0022           01614         MOVWF   PC
+                      01615 
+030C                  01616 M_ZERO  
+030C   0C0F           01617         MOVLW   0FH                     ; MAXIMUM SERIAL NUMBER IS 28 BITS
+030D   0177           01618         ANDWF   SER_0,1
+                      01619 
+030E   0217           01620         MOVFW   SER_0                   ; CHECK SERIAL NUMBER NOT EQUAL TO ZERO
+030F   0116           01621         IORWF   SER_1,W
+0310   0115           01622         IORWF   SER_2,W
+0311   0114           01623         IORWF   SER_3,W
+0312   0643           01624         BTFSC   STATUS,ZERO
+0313   0B06           01625         GOTO    M_LOOP                  ; ... IF ZERO WAIT FOR NEXT TRANSMISSION
+                      01626 
+0314   075F           01627         BTFSS   FLAGS,PASS2             ; IF ON SECOND LEARNING PASS TXNUM IS LEARNING POSITION
+0315   006D           01628         CLRF    TXNUM                   ; ... ELSE POINT TO FIRST TRANSMITTER
+                      01629 
+                      01630 ; ******* COMPARE LOWER WORD OF SERIAL NUMBER ********
+0316                  01631 M_SERIAL
+0316   0908           01632         CALL    TX_LOOKUP               ; GET TX BASE ADDRESS
+0317   052C           01633         BSF     ADDRESS,1               ; ADD 2 TO BASE ADDRESS
+0318   0902           01634         CALL    EE_READ1                ; READ LOWER 16-BITS OF SERIAL NUMBER FROM EEPROM
+0319   05A3           01635         BSF     STATUS,PA0              ; SELECT PAGE #1
+                      01636   
+031A   0210           01637         MOVFW   TMP1                    ; COMPARE RX AND EEPROM VALUES
+031B   0195           01638         XORWF   SER_2,W
+031C   0743           01639         BTFSS   STATUS,ZERO             ; ... IF NOT EQUAL DO ERROR
+031D   0B30           01640         GOTO    M_SER_ERR
+031E   0211           01641         MOVFW   TMP2                    ; COMPARE RX AND EEPROM VALUES
+031F   0194           01642         XORWF   SER_3,W
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 32
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+0320   0743           01643         BTFSS   STATUS,ZERO             ; ... IF NOT EQUAL DO ERROR
+0321   0B30           01644         GOTO    M_SER_ERR
+                      01645         
+                      01646 ; ******* COMPARE UPPER WORD OF SERIAL NUMBER ********
+0322                  01647 M_SERIAL2
+0322   02AC           01648         INCF    ADDRESS,F               ; POINT TO NEXT ENTRY 
+0323   0902           01649         CALL    EE_READ1                ; READ UPPER 16-BITS OF SERIAL NUMBER FROM EEPROM
+0324   05A3           01650         BSF     STATUS,PA0              ; SELECT PAGE #1
+                      01651 
+0325   0210           01652         MOVFW   TMP1                    ; COMPARE RX AND EEPROM VALUES
+0326   0197           01653         XORWF   SER_0,W
+0327   0743           01654         BTFSS   STATUS,ZERO             ; ... IF NOT EQUAL DO ERROR
+0328   0B30           01655         GOTO    M_SER_ERR
+                      01656 
+0329   0211           01657         MOVFW   TMP2                    ; COMPARE RX AND EEPROM VALUES
+032A   0196           01658         XORWF   SER_1,W
+032B   0743           01659         BTFSS   STATUS,ZERO             ; ... IF NOT EQUAL DO ERROR
+032C   0B30           01660         GOTO    M_SER_ERR
+                      01661         
+                      01662 ; ************* TEST IF LEARN ACTIVE ****************
+032D                  01663 M_PASS  
+032D   063F           01664         BTFSC   FLAGS,PASS1
+032E   0A42           01665         GOTO    CALC_KEY                ; TEST IF ON FIRST PASS OF LEARN
+032F   0B46           01666         GOTO    M_HOP                   ; TEST FOR NORMAL PROGRAM FLOW
+                      01667 
+                      01668 ; ******** SERIAL NUMBER COMPARE ERROR FOUND ***********
+0330                  01669 M_SER_ERR
+                      01670 
+                      01671 ; **** SEARCH NEXT POSITION FOR SERIAL NUMBER *****
+0330   02AD           01672 M_NEXT  INCF    TXNUM,F                 ; POINT TO NEXT TRANSMITTER POSITION
+0331   0C06           01673         MOVLW   6H                      ; TEST FOR LAST POSITION
+0332   008D           01674         SUBWF   TXNUM,W
+0333   0703           01675         BTFSS   STATUS,CARRY            ; ... IF NOT GET NEXT ENTRY
+0334   0B16           01676         GOTO    M_SERIAL
+                      01677 
+                      01678 ; **** SERIAL NUMBER NOT FOUND ( ONLY IN NORMAL / PASS1 ) **********
+                      01679 
+0335   063F           01680         BTFSC   FLAGS,PASS1
+0336   0B3A           01681         GOTO    M_NF                    ; TEST IF ON FIRST PASS OF SELFLEARN
+0337   075F           01682         BTFSS   FLAGS,PASS2
+0338   0B06           01683         GOTO    M_LOOP                  ; CHECK IF IN SECOND STATE OF LEARN
+0339   0AC1           01684         GOTO    MAIN
+                      01685 
+                      01686 ; *** IF SERIAL NOT IN MAP READ SELFLEARN POINTER ***
+033A   0C01           01687 M_NF    MOVLW   LRN_PTR                 ; POINT TO LEARN POINTER
+033B   002C           01688         MOVWF   ADDRESS
+033C   0902           01689         CALL    EE_READ1                ; READ LEARN POINTER FROM EEPROM
+033D   05A3           01690         BSF     STATUS,PA0              ; SELECT PAGE #1
+                      01691 
+033E   0C07           01692         MOVLW   07H                     ; MASK TXNUM FROM POINTER
+033F   0151           01693         ANDWF   TMP2,W
+0340   002D           01694         MOVWF   TXNUM
+                      01695 
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 33
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+0341   074D           01696         BTFSS   TXNUM,2                 ; TXNUM < 4 IS VALID
+0342   0A42           01697         GOTO    CALC_KEY                ; ... YES, GENERATE DECRYPTION KEY
+                      01698 
+0343   062D           01699         BTFSC   TXNUM,1                 ; TXNUM > 5 IS INVALID
+0344   006D           01700         CLRF    TXNUM                   ; ... LEARN POSITION SET TO ZERO
+0345   0A42           01701         GOTO    CALC_KEY                ; LEARN CURRENT RECEIVED TRANSMITTER
+                      01702 
+                      01703 ; ********** DECRYPT HOPCODE *********************
+0346                  01704 M_HOP   
+0346   0908           01705         CALL    TX_LOOKUP               ; LOOK UP TRANSMITTER BASE ADDRESS
+0347   054C           01706         BSF     ADDRESS,2               ; ADD 4 TO BASE ADDRESS
+                      01707 
+0348   0AA0           01708         GOTO    READ_KEY                ; READ 64 BIT DECODER KEY ( CALL "READ_KEY")
+0349                  01709 M_DEC   
+0349   04A3           01710         BCF     STATUS,PA0              ; SELECT PAGE #0
+034A   09CC           01711         CALL    DECRYPT                 ; DECRYPT HOPCODE 
+034B   05A3           01712         BSF     STATUS,PA0              ; RE-SELECT PAGE #1
+                      01713 
+034C   073F           01714         BTFSS   FLAGS,PASS1
+034D   0B72           01715         GOTO    M_DIS                   ; TEST IF ON FIRST PASS OF SELFLEARN
+                      01716 
+                      01717 ; ********* UPDATE BUTTON CODE AND DISCR VALUE AFTER SELFLEARN **********
+034E                  01718 M_SL_UPDATE
+034E   0C01           01719         MOVLW   LRN_PTR                 ; POINT LEARN POINTER
+034F   002C           01720         MOVWF   ADDRESS
+0350   0902           01721         CALL    EE_READ1                ; READ LEARN POINTER FROM EEPROM
+0351   05A3           01722         BSF     STATUS,PA0              ; SELECT PAGE #1
+                      01723 
+0352   0C01           01724         MOVLW   1H                      ; INDICATE LEARN ACTIVE IN EEPROM
+0353   0030           01725         MOVWF   TMP1                    
+                      01726 
+0354   0C0F           01727         MOVLW   0FH                     ; MASK LEARN POINTER
+0355   0171           01728         ANDWF   TMP2,1
+0356   0C06           01729         MOVLW   6H                      ; TEST FOR INVALID LEARN POINTER
+0357   0091           01730         SUBWF   TMP2,W                  ; TEST FOR INVALID LEARN POINTER
+0358   0603           01731         BTFSC   STATUS,CARRY            ; TEST FOR INVALID LEARN POINTER
+0359   0071           01732         CLRF    TMP2                    ; ... IF INVALID POINT TO FIRST POSITION
+                      01733 
+035A   038D           01734         SWAPF   TXNUM,W                 ; COPY TXNUM INTO UPPER NIBBLE
+035B   0131           01735         IORWF   TMP2,1
+                      01736 
+035C   0906           01737         CALL    EE_WRITE1               ; UPDATE LEARN POINTER IN EEPROM
+035D   05A3           01738         BSF     STATUS,PA0              ; RE-SELECT PAGE #1
+                      01739 
+035E   0913           01740         CALL    BUT_LOOKUP              ; GET BUTTON CODE BASE ADDRESS
+035F   002C           01741         MOVWF   ADDRESS
+                      01742         
+0360   020B           01743         MOVFW   FUNC                    ; GET CURRENT RX BUTTON CODE
+0361   0030           01744         MOVWF   TMP1
+Error[113]  : Symbol not previously defined (CODE)
+0362   0200           01745         MOVFW   CODE                    ; GET CURRENT RX DISCR CODE
+0363   0031           01746         MOVWF   TMP2
+                      01747 
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 34
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+0364   0906           01748         CALL    EE_WRITE1               ; ... AND WRITE BUTTON & DISCR CODES TO EEPROM
+0365   05A3           01749         BSF     STATUS,PA0              ; RE-SELECT PAGE #1
+                      01750 
+0366   0209           01751         MOVFW   CNTR_HI                 ; STORE ONE RX COUNTER 
+0367   0030           01752         MOVWF   TMP1
+0368   0208           01753         MOVFW   CNTR_LW
+0369   0031           01754         MOVWF   TMP2
+                      01755 
+036A   0908           01756         CALL    TX_LOOKUP               ; POINT TO LSB WORD OF SERIAL NUMBER
+036B   0906           01757         CALL    EE_WRITE1               ; WRITE ONE 16-BIT COUNTER TO EEPROM
+036C   05A3           01758         BSF     STATUS,PA0              ; RE-SELECT PAGE #1
+                      01759 
+036D   04E6           01760         BCF     PORTB,LED               ; LED OFF TO INDICATE FIRST VALID TRANSMISSION RECEIVED
+036E   055F           01761         BSF     FLAGS,PASS2             ; INDICATE PASS2 OF LEARN NOW ACTIVE
+036F   043F           01762         BCF     FLAGS,PASS1             ; INDICATE PASS2 OF LEARN NOW ACTIVE
+0370   041F           01763         BCF     FLAGS,NORMAL            ; CLEAR NORMAL MODE
+0371   0BC9           01764         GOTO    M_RESYNC                ; FORCE A COUNTER RESYNC
+                      01765 
+                      01766 ; ********* TEST DICRIMINATION VALUE *************
+0372                  01767 M_DIS
+0372   0913           01768         CALL    BUT_LOOKUP              ; POINT TO BUTTON CODE ADDRESS
+0373   002C           01769         MOVWF   ADDRESS                 ; STORE VALUE IN ADDRESS REGISTER
+0374   0902           01770         CALL    EE_READ1
+0375   05A3           01771         BSF     STATUS,PA0              ; SELECT PAGE #1
+                      01772 
+0376   075F           01773         BTFSS   FLAGS,PASS2
+0377   0B7E           01774         GOTO    M_DIS2                  ; CHECK IF IN SECOND PASS OF LEARN
+0378   0210           01775         MOVFW   TMP1                    ; CHECK DISC VALUE
+0379   018B           01776         XORWF   FUNC,W
+037A   0EF0           01777         ANDLW   0F0H                    ; MASK BUTTON CODES
+037B   0643           01778         BTFSC   STATUS,ZERO 
+037C   0B7E           01779         GOTO    M_DIS2                  ; IF EQUAL CONTINUE
+037D   0AC1           01780         GOTO    MAIN
+                      01781 
+037E                  01782 M_DIS2
+037E   0211           01783         MOVFW   TMP2                    ; CHECK DISCRIMINATION VALUE 
+Error[113]  : Symbol not previously defined (CODE)
+037F   0180           01784         XORWF   CODE,W
+0380   0643           01785         BTFSC   STATUS,ZERO             ; IF EQUAL CONTINUE
+0381   0B86           01786         GOTO    M_CNT
+                      01787 
+0382   04DF           01788         BCF     FLAGS,RESYNC            ; RESET RESYNC FLAG
+                      01789 
+0383   075F           01790         BTFSS   FLAGS,PASS2
+0384   0B06           01791         GOTO    M_LOOP                  ; TEST IF IN SECOND PASS OF LEARN 
+0385   0AC1           01792         GOTO    MAIN
+                      01793 
+                      01794 ; *************** CHECK COUNTERS VALID ************
+0386                  01795 M_CNT
+0386   07DF           01796         BTFSS   FLAGS,RESYNC            ; TEST RESYNC BIT
+0387   0B8D           01797         GOTO    M_CNT1                  ; ... IF NOT GET COUNTERS FROM EEPROM
+                      01798 
+0388   0C04           01799         MOVLW   TMPCNT
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 35
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+0389   002C           01800         MOVWF   ADDRESS
+038A   0902           01801         CALL    EE_READ1
+038B   05A3           01802         BSF     STATUS,PA0              ; SELECT PAGE #1
+038C   0BA0           01803         GOTO    M_SUB                   ; SUBSTRACT FROM CURRENT COUNTER
+                      01804 
+038D                  01805 M_CNT1
+038D   0908           01806         CALL    TX_LOOKUP               ; POINT LOWER 16 BIT COUNTER
+038E   0902           01807         CALL    EE_READ1                ; READ LOWER 16 BIT COUNTER FROM EEPROM
+038F   05A3           01808         BSF     STATUS,PA0              ; SELECT PAGE #1
+                      01809 
+0390   0210           01810         MOVFW   TMP1                    ; TEMPORY STORE FIRST 16-BIT COUNTER
+0391   0032           01811         MOVWF   TMP3
+0392   0211           01812         MOVFW   TMP2
+0393   0033           01813         MOVWF   TMP4
+                      01814 
+0394   02AC           01815         INCF    ADDRESS,F               ; POINT TO UPPER 16-BIT COUNTER
+0395   0902           01816         CALL    EE_READ1                ; READ UPPER 16-BIT COUNTER FROM EEPROM
+0396   05A3           01817         BSF     STATUS,PA0              ; SELECT PAGE #1
+                      01818 
+0397   0210           01819         MOVFW   TMP1                    ; COMPARE UPPER BYTES OF EEPROM COUNTER
+0398   0192           01820         XORWF   TMP3,W
+0399   0743           01821         BTFSS   STATUS,ZERO             ; ... IF EQUAL COMPARE LOWER
+039A   0B9F           01822         GOTO    M_CNT3                  ; ... IF NOT EQUAL FORCE RESYNC
+                      01823 
+039B   0211           01824         MOVFW   TMP2                    ; COMPARE LOWER BYTES OF EEPROM COUNTER
+039C   0193           01825         XORWF   TMP4,W
+039D   0643           01826         BTFSC   STATUS,ZERO             ; ... IF NOT EQUAL FORCE RESYNC
+039E   0BA0           01827         GOTO    M_SUB                   ; ... ELSE SUBSTRACT FROM RECEIVED COUNTER VALUE
+                      01828 
+039F   0BC9           01829 M_CNT3  GOTO    M_RESYNC                ; FORCE RESYNC ( EEPROM COUNTERS INVALID )
+                      01830 
+                      01831 ; ************ CHECK COUNTER WINDOWS ***********
+03A0                  01832 M_SUB
+03A0   0211           01833         MOVFW   TMP2                    ; 16 BIT COUNTER SUBSTRACTION
+03A1   0088           01834         SUBWF   CNTR_LW,W
+03A2   0031           01835         MOVWF   TMP2                    
+03A3   0703           01836         BTFSS   STATUS,CARRY            ; SKIP IF NO BORROW
+03A4   02B0           01837         INCF    TMP1,F                  ; ... ELSE INCR HI BYTE
+03A5   0210           01838         MOVFW   TMP1
+03A6   0089           01839         SUBWF   CNTR_HI,W
+03A7   0030           01840         MOVWF   TMP1
+                      01841 
+03A8   0210           01842         MOVFW   TMP1                    ; CHECK FOR REPEATED CODES [ COUNTER INC = 0 ]
+03A9   0111           01843         IORWF   TMP2,W
+                      01844 
+03AA   0743           01845         BTFSS   STATUS,ZERO 
+03AB   0BB0           01846         GOTO    M_CHECK0                ; ... IF NOT EQUAL CONTINUE
+                      01847 
+03AC   05A4           01848         BSF     FSR,5                   ; SELECT BANK 1
+03AD   0074           01849         CLRF    CNT1_LW                 ; RESET REPEAT DEBOUNCE TIMER
+03AE   04A4           01850         BCF     FSR,5                   ; SELECT BANK 0
+                      01851 
+03AF   0B06           01852         GOTO    M_LOOP
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 36
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      01853 
+03B0                  01854 M_CHECK0
+03B0   07DF           01855         BTFSS   FLAGS,RESYNC            ; TEST IF RESYNC ACTIVE
+03B1   0BBD           01856         GOTO    M_CHECK1                ; ... IF NOT CHECK FOR COUNTER VALID
+                      01857 
+03B2   04DF           01858         BCF     FLAGS,RESYNC            ; RESET RESYNC FLAG
+03B3   0210           01859         MOVFW   TMP1                    ; TEST IF IN 4 WINDOW ( UPPER BYTE )
+03B4   0743           01860         BTFSS   STATUS,ZERO             ; ....ELSE  ABORT
+03B5   0BBA           01861         GOTO    M_CNT_FAIL
+03B6   0CFC           01862         MOVLW   0FCH                    ; TEST IF IN 4 WINDOW ( LOWER BYTE )
+03B7   0151           01863         ANDWF   TMP2,W
+03B8   0643           01864         BTFSC   STATUS,ZERO             ; ... IF NOT EQUAL COUNTER INVALID
+03B9   0BD3           01865         GOTO    M_UPDATE                ; ... ELSE COUNTER VALID, UPDATE EEPROM COUNTERS
+                      01866 
+03BA                  01867 M_CNT_FAIL
+03BA   075F           01868         BTFSS   FLAGS,PASS2
+03BB   0B06           01869         GOTO    M_LOOP                  ; TEST IF ON SECOND PASS OF LEARN
+03BC   0AC1           01870         GOTO    MAIN
+                      01871 
+03BD                  01872 M_CHECK1
+03BD   06F0           01873         BTFSC   TMP1,7                  ; TEST IF IN DARK REGION ( > 7FFF )
+03BE   0B06           01874         GOTO    M_LOOP                  ; ... IF SO IGNORE TRANSMISSION
+                      01875 
+03BF   0210           01876         MOVFW   TMP1                    ; TEST FOR RESYNC REQUIRED
+03C0   0743           01877         BTFSS   STATUS,ZERO 
+03C1   0BC9           01878         GOTO    M_RESYNC                ; DIFFERENCE > 256, FORCE RESYNC
+                      01879 
+03C2   0211           01880         MOVFW   TMP2                    ; 16 BIT COUNTER ZERO
+03C3   0643           01881         BTFSC   STATUS,ZERO             ; 
+03C4   0B06           01882         GOTO    M_LOOP                  ; COUNTERS EQUAL, IGNORE TRANSMISSION
+                      01883 
+03C5                  01884 M_CHECK2
+03C5   0CF0           01885         MOVLW   0F0H                    ; TEST IF IN 16 WINDOW
+03C6   0151           01886         ANDWF   TMP2,W
+03C7   0643           01887         BTFSC   STATUS,ZERO             ; ... IF NOT VALID FORCE COUNTER RESYNC
+03C8   0BD3           01888         GOTO    M_UPDATE                ; ... ELSE UPDATE EEPROM COUNTERS
+                      01889 
+03C9                  01890 M_RESYNC
+03C9   05DF           01891         BSF     FLAGS,RESYNC            ; INDICATE RESYNC REQUIRED
+03CA   0209           01892         MOVFW   CNTR_HI                 ; STORE CURRENT RECEIVED 16-BIT COUNTER
+03CB   0030           01893         MOVWF   TMP1
+03CC   0208           01894         MOVFW   CNTR_LW
+03CD   0031           01895         MOVWF   TMP2
+03CE   0C04           01896         MOVLW   TMPCNT
+03CF   002C           01897         MOVWF   ADDRESS
+03D0   0906           01898         CALL    EE_WRITE1               ; WRITE TEMPORARY COUNTER
+03D1   05A3           01899         BSF     STATUS,PA0              ; RE-SELECT PAGE #1
+03D2   0B06           01900         GOTO    M_LOOP                  ; WAIT FOR NEXT TRANSMISSION
+                      01901 
+                      01902 ; ************ UPDATE EEPROM COUNTER ***********
+03D3                  01903 M_UPDATE
+                      01904 
+03D3   0908           01905         CALL    TX_LOOKUP               ; GET CURRENT TX BASE ADDRESS
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 37
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+03D4   0209           01906         MOVFW   CNTR_HI                 ; STORE FIRST 16-BIT RECEIVE COUNTER
+03D5   0030           01907         MOVWF   TMP1
+03D6   0208           01908         MOVFW   CNTR_LW
+03D7   0031           01909         MOVWF   TMP2
+03D8   0906           01910         CALL    EE_WRITE1               ; WRITE LSB WORD OF SERIAL NUMBER TO EEPROM
+03D9   05A3           01911         BSF     STATUS,PA0              ; RE-SELECT PAGE #1
+                      01912 
+03DA   0209           01913         MOVFW   CNTR_HI                 ; STORE SECOND 16-BIT RECEIVED COUNTER
+03DB   0030           01914         MOVWF   TMP1
+03DC   0208           01915         MOVFW   CNTR_LW
+03DD   0031           01916         MOVWF   TMP2
+03DE   0906           01917         CALL    EE_WRITE1               ; WRITE MSB WORD OF SERIAL NUMBER TO EEPROM
+03DF   05A3           01918         BSF     STATUS,PA0              ; RE-SELECT PAGE #1
+                      01919 
+03E0   061F           01920         BTFSC   FLAGS,NORMAL
+03E1   0BF9           01921         GOTO    M_BUT                   ; TEST FOR NORMAL PROGRAM FLOW
+                      01922 
+03E2   063F           01923         BTFSC   FLAGS,PASS1
+03E3   0B06           01924         GOTO    M_LOOP                  ; TEST FIRST PASS
+                      01925 
+                      01926 ; ********** MAYBE UPDATE LEARN POINTER AFTER VALID SELFLEARN *********
+03E4                  01927 M_PTR
+03E4   0C01           01928         MOVLW   LRN_PTR                 ; POINT TO LEARN POINTER
+03E5   002C           01929         MOVWF   ADDRESS
+03E6   0902           01930         CALL    EE_READ1                ; READ LEARN POINTER FROM EEPROM
+03E7   05A3           01931         BSF     STATUS,PA0              ; SELECT PAGE #1
+                      01932 
+03E8   0211           01933         MOVFW   TMP2                    ; MASK LEARN POINTER
+03E9   0E07           01934         ANDLW   07H                     ; ... STORE RESULT IN W REGISTER
+03EA   0031           01935         MOVWF   TMP2                    ; ... AND TMP2 REGISTER
+                      01936 
+03EB   018D           01937         XORWF   TXNUM,W                 ; LEARNING EXISTING OR NEW TRANSMITTER
+03EC   0643           01938         BTFSC   STATUS,ZERO             ; ... TXNUM EQUAL LEARN POINTER FOR NEW TRANSMITTER
+03ED   02B1           01939         INCF    TMP2,F                  ; ... IF NEW TRANSMITTER INCREMENT LEARN POINTER
+                      01940 
+03EE   0C06           01941         MOVLW   6H                      ; TEST FOR LAST POSITION
+03EF   0091           01942         SUBWF   TMP2,W                  ; TEST FOR LAST POSITION
+03F0   0603           01943         BTFSC   STATUS,CARRY            ; TEST FOR LAST POSITION
+03F1   0071           01944         CLRF    TMP2                    ; ... IF LAST POSITION POINT TO FIRST POSITION
+03F2   0070           01945         CLRF    TMP1                    ; ALWAYS CLEAR UPPER BYTE OF LEARN POINTER
+                      01946 
+03F3   0C01           01947         MOVLW   LRN_PTR                 ; POINT TO LEARN POINTER
+03F4   002C           01948         MOVWF   ADDRESS
+03F5   0906           01949         CALL    EE_WRITE1               ; WRITE LEARN POINTER TO EEPROM
+03F6   05A3           01950         BSF     STATUS,PA0              ; RE-SELECT PAGE #1
+                      01951 
+03F7   04A3           01952         BCF     STATUS,PA0              ; SELECT PAGE #0
+03F8   0BBD           01953         GOTO    LEARN_OK                ; THEN INDICATE LEARN SUCCESSFUL
+                      01954 
+03F9                  01955 M_BUT   
+03F9   04A3           01956         BCF     STATUS,PA0              ; CLEAR PAGE BIT #0
+03FA   05C3           01957         BSF     STATUS,PA1              ; SET PAGE BIT #1
+03FB   0AE2           01958         GOTO    M_TEST
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 38
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      01959 
+                      01960 ;**************************************************************************
+                      01961 ; PAGE 2:
+                      01962 ;**************************************************************************
+0400                  01963         ORG     400H
+                      01964 
+                      01965 ;**************************************************************************
+                      01966 ; CALLS TO PAGE 0
+                      01967 ;**************************************************************************
+                      01968 
+0400                  01969 EE_WRITE2
+0400   04C3           01970         BCF     STATUS,PA1              ; SELECT PAGE #0
+0401   0B8A           01971         GOTO    EEWRITE                 ; CALL EEPROM WRITE ROUTINE
+                      01972 
+                      01973 ;**************************************************************************
+                      01974 ;
+                      01975 ; FUNCTION        : WAIT ()
+                      01976 ;
+                      01977 ; DESCRIPTION     : WAIT FOR CNT1 TIMES 1 MS
+                      01978 ;                       CNT2 = OSC/[4*6*1000]  [ 1MS ]
+                      01979 ;
+                      01980 ; PAGE          : 2
+                      01981 ;
+                      01982 ;**************************************************************************
+                      01983 
+0402                  01984 WAIT50
+0402   0C32           01985         MOVLW   50D                     ; DELAY COUNTER FOR 50 MS
+0403   0039           01986         MOVWF   CNT1
+0404   0A07           01987         GOTO    WAIT
+                      01988 
+0405                  01989 WAIT250
+0405   0CFA           01990         MOVLW   250D                    ; DELAY COUNTER FOR 250 MS
+0406   0039           01991         MOVWF   CNT1
+0407                  01992 WAIT
+0407   0CC8           01993         MOVLW   200D                    ; DELAY COUNTER FOR 1 MS
+0408   003A           01994         MOVWF   CNT2
+0409                  01995 WAIT1
+0409   0000           01996         NOP                             ; [1] WASTE TIME
+040A   0004           01997         CLRWDT                          ; [1]
+040B   02FA           01998         DECFSZ  CNT2,F                  ; [1]
+040C   0A09           01999         GOTO    WAIT1                   ; [2]
+                      02000 
+040D   02F9           02001         DECFSZ  CNT1,F                  ; [1]
+040E   0A07           02002         GOTO    WAIT                    ; [2]
+040F   0800           02003         RETLW   0
+                      02004 
+                      02005 ;**************************************************************************
+                      02006 ;
+                      02007 ; FUNCTION      : ARMED ()                              
+                      02008 ;
+                      02009 ; DESCRIPTION   : ARMED STATE, CHECK TRIGGER INPUTS AND REMOTE
+                      02010 ;
+                      02011 ; PAGE          : 2
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 39
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      02012 ;
+                      02013 ;**************************************************************************
+                      02014 
+0410                  02015 ARMED   
+0410   0526           02016         BSF     PORTB,SIREN             ; CHIRP SIREN 50 MS
+0411   0546           02017         BSF     PORTB,PLIGHT            ; FLASH PARKING LIGHT 50 MS
+0412   0902           02018         CALL    WAIT50
+0413   0426           02019         BCF     PORTB,SIREN             ; SIREN OFF
+0414   0446           02020         BCF     PORTB,PLIGHT            ; PARKING LIGHT OFF
+                      02021 
+0415   0586           02022         BSF     PORTB,LOCK              ; LOCK DOORS 500 MS
+0416   0905           02023         CALL    WAIT250
+0417   0905           02024         CALL    WAIT250
+0418   0486           02025         BCF     PORTB,LOCK              ; LOCK DOORS 500 MS
+                      02026 
+0419                  02027 ARMED3
+0419   05A4           02028         BSF     FSR,5                   ; SELECT BANK 0
+041A   0C19           02029         MOVLW   25                      ; COMPENSATE FOR DOOR LOCK TIME
+041B   0036           02030         MOVWF   CNT2_LW
+041C   04A4           02031         BCF     FSR,5                   ; SELECT BANK 0
+                      02032 
+041D   057F           02033         BSF     FLAGS,LFLASH            ; SET LED FLASH MODE
+041E   049F           02034         BCF     FLAGS,PFLASH            ; CLEAR PLIGHT FLASH MODE
+041F   0426           02035         BCF     PORTB,SIREN             ; SIREN OFF
+0420   0406           02036         BCF     PORTB,IMMO              ; DISABLE START
+                      02037 
+0421   0C03           02038         MOVLW   BSTATUS                 ; POINT TO BACKUP STATUS
+0422   002C           02039         MOVWF   ADDRESS
+0423   0CA5           02040         MOVLW   ARMEDS
+0424   0030           02041         MOVWF   TMP1
+0425   0CC7           02042         MOVLW   X1
+0426   0031           02043         MOVWF   TMP2
+0427   0900           02044         CALL    EE_WRITE2               ; UPDATE STATUS
+0428   05C3           02045         BSF     STATUS,PA1              ; SELECT PAGE #2
+                      02046 
+0429   0C02           02047         MOVLW   SSTATUS                 ; POINT STATUS
+042A   002C           02048         MOVWF   ADDRESS
+042B   0CA5           02049         MOVLW   ARMEDS
+042C   0030           02050         MOVWF   TMP1
+042D   0C8B           02051         MOVLW   X2
+042E   0031           02052         MOVWF   TMP2
+042F   0900           02053         CALL    EE_WRITE2               ; UPDATE STATUS
+0430   05C3           02054         BSF     STATUS,PA1              ; SELECT PAGE #2
+                      02055 
+0431   0CA5           02056         MOVLW   ARMEDS
+0432   003D           02057         MOVWF   RAMS                    ; UPDATE RAM STATE
+                      02058 
+0433                  02059 ARMED4  
+0433   072F           02060         BTFSS   FLAGS1,S_RSTR           ; WAS THERE A UNSUCCESSFUL LEARN
+0434   0A37           02061         GOTO    ARMED5                  ; NO, CONTINUE
+                      02062 
+0435   057F           02063         BSF     FLAGS,LFLASH            ; SET LED FLASH MODE
+0436   042F           02064         BCF     FLAGS1,S_RSTR           ; RESET LEARN TIMEOUT FLAG
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 40
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      02065 
+0437                  02066 ARMED5
+                      02067 
+0437   0647           02068         BTFSC   PORTC,DOOR
+0438   0ABA           02069         GOTO    ALARM                   ; CHECK IF DOOR OPEN
+                      02070 
+0439   0627           02071         BTFSC   PORTC,TRIG
+043A   0ABA           02072         GOTO    ALARM                   ; CHECK IF SHOCK SENSOR TRIGGERED
+                      02073 
+043B   0607           02074         BTFSC   PORTC,IGN
+043C   0ABA           02075         GOTO    ALARM                   ; CHECK IF IGNITION TAMPER
+                      02076 
+043D   0202           02077         MOVF    PC,W
+043E   003E           02078         MOVWF   STACK
+043F   0ADF           02079         GOTO    REMOTE                  ; CALL RF CHECK ROUTINE
+                      02080 
+0440   0603           02081         BTFSC   STATUS,CARRY
+0441   0A33           02082         GOTO    ARMED4                  ; CHECK IF TRANSMISSION VALID
+0442   0C01           02083         MOVLW   01H
+0443   018B           02084         XORWF   FUNC,W
+                      02085 
+0444   0643           02086         BTFSC   STATUS,ZERO             ; IF FUNCTION 1 CODE
+0445   0A47           02087         GOTO    DRIVE                   ; GOTO DRIVE MODE
+0446   0A33           02088         GOTO    ARMED4                  ; ELSE STAY IN ARMED MODE
+                      02089 
+                      02090 ;**************************************************************************
+                      02091 ;
+                      02092 ; FUNCTION      : DRIVE ()                              
+                      02093 ;
+                      02094 ; DESCRIPTION   : DRIVE STATE, UNLOCK DOORS, CHIRP SIREN 2 TIMES, 
+                      02095 ;                 ENABLE START
+                      02096 ;
+                      02097 ; PAGE          : 2
+                      02098 ;
+                      02099 ;**************************************************************************
+                      02100 
+0447                  02101 DRIVE
+0447   0526           02102         BSF     PORTB,SIREN             ; CHIRP SIREN 50 MS
+0448   0546           02103         BSF     PORTB,PLIGHT            ; FLASH PARKING LIGHT 50 MS
+0449   0902           02104         CALL    WAIT50
+044A   0426           02105         BCF     PORTB,SIREN             ; SIREN OFF
+044B   0446           02106         BCF     PORTB,PLIGHT            ; PARKING LIGHT OFF
+                      02107 
+044C   05A6           02108         BSF     PORTB,UNLOCK            ; UNLOCK DOORS 500 MS
+044D   0905           02109         CALL    WAIT250
+044E   0905           02110         CALL    WAIT250
+044F   04A6           02111         BCF     PORTB,UNLOCK            ; UNLOCK DOORS 500 MS
+                      02112         
+0450   0526           02113         BSF     PORTB,SIREN             ; CHIRP SIREN 50 MS
+0451   0546           02114         BSF     PORTB,PLIGHT            ; FLASH PARKING LIGHT 50 MS
+0452   0902           02115         CALL    WAIT50
+0453   0426           02116         BCF     PORTB,SIREN             ; SIREN OFF
+0454   0446           02117         BCF     PORTB,PLIGHT            ; PARKING LIGHT OFF
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 41
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      02118 
+0455   05A4           02119         BSF     FSR,5                   ; SELECT BANK 0
+0456   0C19           02120         MOVLW   25D                     ; COMPENSATE FOR DOOR UNLOCK TIME
+0457   0036           02121         MOVWF   CNT2_LW
+0458   04A4           02122         BCF     FSR,5                   ; SELECT BANK 0
+                      02123 
+0459                  02124 DRIVE4
+0459   047F           02125         BCF     FLAGS,LFLASH            ; CLEAR LED FLASH MODE
+045A   049F           02126         BCF     FLAGS,PFLASH            ; CLEAR PLIGHT FLASH MODE
+045B   0506           02127         BSF     PORTB,IMMO              ; ENABLE START
+045C   04E6           02128         BCF     PORTB,LED               ; LED OFF
+                      02129 
+045D   0C03           02130         MOVLW   BSTATUS                 ; POINT TO BACKUP STATUS
+045E   002C           02131         MOVWF   ADDRESS
+045F   0C5A           02132         MOVLW   DRIVES
+0460   0030           02133         MOVWF   TMP1
+0461   0CC7           02134         MOVLW   X1
+0462   0031           02135         MOVWF   TMP2
+0463   0900           02136         CALL    EE_WRITE2               ; UPDATE STATUS
+0464   05C3           02137         BSF     STATUS,PA1              ; SELECT PAGE #2
+                      02138 
+0465   0C02           02139         MOVLW   SSTATUS                 ; POINT STATUS
+0466   002C           02140         MOVWF   ADDRESS
+0467   0C5A           02141         MOVLW   DRIVES
+0468   0030           02142         MOVWF   TMP1
+0469   0C8B           02143         MOVLW   X2
+046A   0031           02144         MOVWF   TMP2
+046B   0900           02145         CALL    EE_WRITE2               ; UPDATE STATUS
+046C   05C3           02146         BSF     STATUS,PA1              ; SELECT PAGE #2
+                      02147 
+046D   0C5A           02148         MOVLW   DRIVES
+046E   003D           02149         MOVWF   RAMS                    ; UPDATE RAM STATE
+                      02150 
+046F                  02151 DRIVE5
+046F   007B           02152         CLRF    CNT_HI                  ; RESET RTCC CLOCK
+0470   007C           02153         CLRF    CNT_LW                  
+                      02154 
+0471                  02155 DRIVE6  
+0471   072F           02156         BTFSS   FLAGS1,S_RSTR           ; WAS THERE A UNSUCCESSFUL LEARN
+0472   0A75           02157         GOTO    DRIVE61                 ; NO, CONTINUE
+                      02158 
+0473   04E6           02159         BCF     PORTB,LED               ; SET LED FLASH MODE
+0474   042F           02160         BCF     FLAGS1,S_RSTR           ; RESET LEARN TIMEOUT FLAG
+                      02161 
+0475                  02162 DRIVE61
+                      02163 
+0475   0607           02164         BTFSC   PORTC,IGN
+0476   0A83           02165         GOTO    DRIVE7                  ; CHECK IF IGNITION ON
+                      02166 
+0477   065B           02167         BTFSC   CNT_HI,2        
+0478   0A95           02168         GOTO    IMMOB                   ; TEST FOR IMMOBILIZE TIMEOUT 30S
+                      02169 
+0479   0202           02170         MOVF    PC,W
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 42
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+047A   003E           02171         MOVWF   STACK
+047B   0ADF           02172         GOTO    REMOTE                  ; CALL RECEIVE ROUTINE
+                      02173 
+047C   0603           02174         BTFSC   STATUS,CARRY
+047D   0A71           02175         GOTO    DRIVE6                  ; CHECK IF TRANSMISSION VALID
+                      02176 
+047E   0C01           02177         MOVLW   01H
+047F   018B           02178         XORWF   FUNC,W
+                      02179 
+0480   0643           02180         BTFSC   STATUS,ZERO             ; FUNCTION = 1? 
+0481   0A10           02181         GOTO    ARMED                   ; ... YES, GOTO ARMED MODE
+0482   0A71           02182         GOTO    DRIVE6                  ; ... NO, STAY IN DRIVE MODE
+                      02183 
+0483                  02184 DRIVE7
+                      02185 
+0483   072F           02186         BTFSS   FLAGS1,S_RSTR           ; WAS THERE A UNSUCCESSFUL LEARN
+0484   0A87           02187         GOTO    DRIVE71                 ; NO, CONTINUE
+                      02188 
+0485   04E6           02189         BCF     PORTB,LED               ; SET LED FLASH MODE
+0486   042F           02190         BCF     FLAGS1,S_RSTR           ; RESET LEARN TIMEOUT FLAG
+                      02191 
+0487                  02192 DRIVE71
+                      02193 
+0487   0707           02194         BTFSS   PORTC,IGN
+0488   0A6F           02195         GOTO    DRIVE5                  ; CHECK IF IGNITION OFF
+                      02196 
+0489   0202           02197         MOVF    PC,W
+048A   003E           02198         MOVWF   STACK
+048B   0ADF           02199         GOTO    REMOTE                  ; CHECK FOR VALID TRANSMISSIONS
+                      02200 
+048C   0603           02201         BTFSC   STATUS,CARRY
+048D   0A83           02202         GOTO    DRIVE7                  ; CHECK IF TRANSMISSION VALID
+                      02203 
+048E   0C01           02204         MOVLW   01H
+048F   018B           02205         XORWF   FUNC,W
+                      02206 
+0490   0743           02207         BTFSS   STATUS,ZERO             ; FUNCTION 1 CODE?
+0491   0A83           02208         GOTO    DRIVE7                  ; ... NO, STAY IN DRIVE
+                      02209 
+0492                  02210 DRIVE8                                  ; ... YES REDO OUTPUTS
+0492   0506           02211         BSF     PORTB,IMMO              ; AND WAIT FOR IGN = OFF
+0493   04E6           02212         BCF     PORTB,LED
+0494   0A83           02213         GOTO    DRIVE7
+                      02214 
+                      02215 ;**************************************************************************
+                      02216 ;
+                      02217 ; FUNCTION      : IMMOB ()                              
+                      02218 ;
+                      02219 ; DESCRIPTION   : IMMOB STATE - DISABLE START
+                      02220 ;
+                      02221 ; PAGE          : 2
+                      02222 ;
+                      02223 ;**************************************************************************
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 43
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      02224 
+0495                  02225 IMMOB
+                      02226 
+0495   05E6           02227         BSF     PORTB,LED               ; LED ON
+0496   0446           02228         BCF     PORTB,PLIGHT            ; PLIGHT OFF
+0497   0406           02229         BCF     PORTB,IMMO              ; DISABLE START
+                      02230 
+0498                  02231 IMMOB1
+                      02232 
+0498   0C03           02233         MOVLW   BSTATUS                 ; POINT TO BACKUP STATUS
+0499   002C           02234         MOVWF   ADDRESS
+049A   0C3C           02235         MOVLW   IMMOBS
+049B   0030           02236         MOVWF   TMP1
+049C   0CC7           02237         MOVLW   X1
+049D   0031           02238         MOVWF   TMP2
+049E   0900           02239         CALL    EE_WRITE2               ; UPDATE STATUS
+049F   05C3           02240         BSF     STATUS,PA1              ; SELECT PAGE #2
+                      02241 
+04A0   0C02           02242         MOVLW   SSTATUS                 ; POINT STATUS
+04A1   002C           02243         MOVWF   ADDRESS
+04A2   0C3C           02244         MOVLW   IMMOBS
+04A3   0030           02245         MOVWF   TMP1
+04A4   0C8B           02246         MOVLW   X2
+04A5   0031           02247         MOVWF   TMP2
+04A6   0900           02248         CALL    EE_WRITE2               ; UPDATE STATUS
+04A7   05C3           02249         BSF     STATUS,PA1              ; SELECT PAGE #2
+                      02250 
+04A8   0C3C           02251         MOVLW   IMMOBS
+04A9   003D           02252         MOVWF   RAMS                    ; UPDATE RAM STATE
+                      02253 
+04AA                  02254 IMMOB2
+                      02255 
+04AA   072F           02256         BTFSS   FLAGS1,S_RSTR           ; WAS THERE A UNSUCCESSFUL LEARN
+04AB   0AAE           02257         GOTO    IMMOB3                  ; NO, CONTINUE
+                      02258 
+04AC   05E6           02259         BSF     PORTB,LED               ; SET LED ON
+04AD   042F           02260         BCF     FLAGS1,S_RSTR           ; RESET LEARN TIMEOUT FLAG
+                      02261 
+04AE                  02262 IMMOB3
+04AE   0202           02263         MOVF    PC,W
+04AF   003E           02264         MOVWF   STACK
+04B0   0ADF           02265         GOTO    REMOTE                  ; RF CHECK ROUTINE
+                      02266 
+04B1   0603           02267         BTFSC   STATUS,CARRY
+04B2   0AAA           02268         GOTO    IMMOB2                  ; CHECK IF TRANSMISSION VALID
+04B3   0C01           02269         MOVLW   01H
+04B4   018B           02270         XORWF   FUNC,W
+                      02271 
+04B5   0743           02272         BTFSS   STATUS,ZERO             ; FUNCTION 1 CODE?
+04B6   0AAA           02273         GOTO    IMMOB2                  ; ... NO, STAY IN IMMOB MODE
+                      02274 
+04B7   0607           02275         BTFSC   PORTC,IGN               ; IGN ON?               
+04B8   0A59           02276         GOTO    DRIVE4                  ; ... YES, GOTO DRIVE MODE
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 44
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      02277 
+04B9   0A10           02278         GOTO    ARMED                   ; ... NO , GOTO ARMED MODE      
+                      02279 
+                      02280 
+                      02281 ;**************************************************************************
+                      02282 ;
+                      02283 ; FUNCTION      : ALARM ()                              
+                      02284 ;
+                      02285 ; DESCRIPTION   : ALARM STATE - SWITCH SIREN ON, FLASH PARKING LIGHTS
+                      02286 ;
+                      02287 ; PAGE          : 2
+                      02288 ;
+                      02289 ;**************************************************************************
+                      02290 
+04BA                  02291 ALARM
+04BA   0526           02292         BSF     PORTB,SIREN             ; SIREN ON
+04BB   059F           02293         BSF     FLAGS,PFLASH            ; SET PLIGHT FLASH MODE
+04BC   057F           02294         BSF     FLAGS,LFLASH            ; SET LED FLASH MODE
+04BD   007B           02295         CLRF    CNT_HI                  ; RESET RTCC CLOCK
+04BE   007C           02296         CLRF    CNT_LW                  
+04BF   0406           02297         BCF     PORTB,IMMO              ; DISABLE START
+                      02298 
+04C0                  02299 ALARM1
+                      02300 
+04C0   0C03           02301         MOVLW   BSTATUS                 ; POINT TO BACKUP STATUS
+04C1   002C           02302         MOVWF   ADDRESS
+04C2   0C42           02303         MOVLW   ALARMS
+04C3   0030           02304         MOVWF   TMP1
+04C4   0CC7           02305         MOVLW   X1
+04C5   0031           02306         MOVWF   TMP2
+04C6   0900           02307         CALL    EE_WRITE2               ; UPDATE STATUS
+04C7   05C3           02308         BSF     STATUS,PA1              ; SELECT PAGE #2
+                      02309 
+04C8   0C02           02310         MOVLW   SSTATUS                 ; POINT STATUS
+04C9   002C           02311         MOVWF   ADDRESS
+04CA   0C42           02312         MOVLW   ALARMS
+04CB   0030           02313         MOVWF   TMP1
+04CC   0C8B           02314         MOVLW   X2
+04CD   0031           02315         MOVWF   TMP2
+04CE   0900           02316         CALL    EE_WRITE2               ; UPDATE STATUS
+04CF   05C3           02317         BSF     STATUS,PA1              ; SELECT PAGE #2
+                      02318 
+04D0   0C42           02319         MOVLW   ALARMS
+04D1   003D           02320         MOVWF   RAMS                    ; UPDATE RAM STATE
+                      02321 
+04D2                  02322 ALARM2  
+04D2   0406           02323         BCF     PORTB,IMMO              ; DISABLE START
+                      02324 
+04D3   065B           02325         BTFSC   CNT_HI,2
+04D4   0A19           02326         GOTO    ARMED3                  ; TEST FOR ALARM TIMEOUT
+                      02327 
+04D5   0202           02328         MOVF    PC,W
+04D6   003E           02329         MOVWF   STACK
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 45
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+04D7   0ADF           02330         GOTO    REMOTE                  ; CALL RF CHECK ROUTINE
+                      02331 
+04D8   0603           02332         BTFSC   STATUS,CARRY
+04D9   0AD2           02333         GOTO    ALARM2                  ; CHECK IF TRANSMISSION VALID
+04DA   0C01           02334         MOVLW   01H
+04DB   018B           02335         XORWF   FUNC,W
+                      02336 
+04DC   0743           02337         BTFSS   STATUS,ZERO             ; FUNCTION 1 CODE?
+04DD   0AD2           02338         GOTO    ALARM2                  ; ... NO, STAY IN ALARM MODE    
+04DE   0A47           02339         GOTO    DRIVE                   ; ... YES, GOTO DRIVE MODE      
+                      02340 
+                      02341 ;**************************************************************************
+                      02342 ;
+                      02343 ; FUNCTION        : REMOTE ()
+                      02344 ;
+                      02345 ; DESCRIPTION     : CHECK RF FOR VALID CODE
+                      02346 ;
+                      02347 ; NOTE  ****      : CALLS TO THIS ROUTINE CAN ONLY BE MADE FROM THE LOWER
+                      02348 ;                   HALF OF THE PAGE
+                      02349 ;
+                      02350 ; PAGE            : 2
+                      02351 ;
+                      02352 ;**************************************************************************
+                      02353 
+04DF                  02354 REMOTE  
+04DF   05A3           02355         BSF     STATUS,PA0              ; SELECT PAGE #1
+04E0   04C3           02356         BCF     STATUS,PA1              ; SELECT PAGE #1
+04E1   0B00           02357         GOTO    M_CHECK                 ; MAIN RF CHECK ROUTINE
+                      02358                                         
+                      02359 ; ************ TEST RECEIVED BUTTON CODE ***********
+04E2                  02360 M_TEST          
+                      02361 
+                      02362 ; AT THIS POINT CODE HAS BEEN DECRYPTED
+                      02363 ; DISCRIMINATION VALUE IS VALID
+                      02364 ; COUNTERS ARE VALID                                            
+                      02365 ; FUNCTION CODE MUST BE INTERPRETED
+                      02366 
+04E2   03AB           02367         SWAPF   FUNC,F                  ; GET FUNCTION CODE BITS IN LOWER NIBBLE  : XXXX 111X
+04E3   048B           02368         BCF     FUNC,4                  ; CLEAR BIT 4 FOR RIGHT RORATE            : XXX0 111X           
+04E4   032B           02369         RRF     FUNC,F                  ; RIGHT ROTATE TO GET INTO LOWER 3 BITS   : XXXX 0111   
+04E5   0603           02370         BTFSC   STATUS,CARRY            ; CHECK IF CARRY OUT : S3 WAS SET
+04E6   056B           02371         BSF     FUNC,3                  ; SET BIT 3 TO INDICATE S3 WAS SET
+                      02372 
+04E7                  02373 M_TEST1 
+04E7   05FF           02374         BSF     FLAGS,RPT               ; SET REPEATED CODE FLAG
+04E8   05A4           02375         BSF     FSR,5                   ; SELECT BANK 0
+04E9   0074           02376         CLRF    CNT1_LW                 ; RESET DEBOUNCE TIMER
+04EA   0076           02377         CLRF    CNT2_LW                 ; RESET 2 SEC PANIC TIMER
+04EB   04A4           02378         BCF     FSR,5                   ; SELECT BANK 0
+                      02379 
+04EC   0C0F           02380         MOVLW   0FH                     ; MASK FUNCTION BITS
+04ED   016B           02381         ANDWF   FUNC,F                  
+                      02382 
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 46
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+04EE   0C02           02383         MOVLW   02H                     ; TEST FOR TRUNK RELEASE
+04EF   018B           02384         XORWF   FUNC,W                  ; FUNC = 2
+                      02385 
+04F0   0743           02386         BTFSS   STATUS,ZERO 
+04F1   0AFA           02387         GOTO    M_TEST2
+                      02388 
+04F2   05C6           02389         BSF     PORTB,TRUNK             ; DO TRUNK RELEASE
+04F3   0905           02390         CALL    WAIT250
+04F4   0905           02391         CALL    WAIT250
+04F5   04C6           02392         BCF     PORTB,TRUNK
+04F6   05A4           02393         BSF     FSR,5                   ; SELECT BANK 0
+04F7   0C0A           02394         MOVLW   10                      ; COMPENSATE FOR TRUNK RELEASE TIME
+04F8   0036           02395         MOVWF   CNT2_LW
+04F9   04A4           02396         BCF     FSR,5                   ; SELECT BANK 0
+                      02397 
+04FA                  02398 M_TEST2
+04FA   0C42           02399         MOVLW   ALARMS                  ; DONT TEST FOR CAR
+04FB   019D           02400         XORWF   RAMS,W                  ; FINDER IN ALARM STATE
+04FC   0643           02401         BTFSC   STATUS,ZERO
+04FD   0B05           02402         GOTO    M_TEST3
+                      02403 
+04FE   0C03           02404         MOVLW   03H                     ; TEST FOR CAR FINDER
+04FF   018B           02405         XORWF   FUNC,W                  ; FUNC = 3
+                      02406 
+0500   0743           02407         BTFSS   STATUS,ZERO        
+0501   0B05           02408         GOTO    M_TEST3            
+                      02409 
+0502   0526           02410         BSF     PORTB,SIREN             ; CHIRP SIREN 50 MS
+0503   0902           02411         CALL    WAIT50
+0504   0426           02412         BCF     PORTB,SIREN             ; SIREN OFF
+                      02413 
+0505                  02414 M_TEST3
+0505   0C02           02415         MOVLW   2                       ; CALCULATE RETURN ADDRESS
+0506   01DE           02416         ADDWF   STACK,W
+0507   0403           02417         CLRC                            ; SET VALID RECEPTION FLAG
+0508   0022           02418         MOVWF   PC                      ; RETURN TO CALLER              
+                      02419 
+                      02420 ;**************************************************************************
+                      02421 ; END OF FILE : SECSYS14.ASM
+                      02422 ;**************************************************************************
+07FF                  02423         ORG     7FFH                    ; RESET VECTOR
+07FF   0A00           02424         GOTO    RESET
+                      02425         END
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 47
+
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+ADDRESS                           0000000C
+ALARM                             000004BA
+ALARM1                            000004C0
+ALARM2                            000004D2
+ALARMS                            00000042
+ARMED                             00000410
+ARMED3                            00000419
+ARMED4                            00000433
+ARMED5                            00000437
+ARMEDS                            000000A5
+BAT_LOW                           00000003
+BITIN                             00000000
+BSTATUS                           00000003
+BUT_LOOKUP                        00000213
+CALC_END                          0000027C
+CALC_KEY                          00000242
+CARRY                             00000000
+CLK                               00000001
+CNT0                              00000018
+CNT1                              00000019
+CNT1_HI                           00000035
+CNT1_LW                           00000034
+CNT2                              0000001A
+CNT2_HI                           00000037
+CNT2_LW                           00000036
+CNTR_HI                           00000009
+CNTR_LW                           00000008
+CNT_HI                            0000001B
+CNT_LW                            0000001C
+CS                                00000002
+CSR0                              00000008
+CSR1                              00000009
+CSR2                              0000000A
+CSR3                              0000000B
+CSR4                              00000014
+CSR5                              00000015
+CSR6                              00000016
+CSR7                              00000017
+CSR8                              0000000C
+DAT1                              0000000B
+DAT2                              0000000A
+DAT3                              00000009
+DAT4                              00000008
+DC                                00000001
+DECRYPT                           000000CC
+DECRYPT_INNER                     000000D0
+DECRYPT_OUTER                     000000CE
+DIO                               00000000
+DL1                               0000008C
+DL2                               00000096
+DL3                               000000A7
+DOOR                              00000002
+DRIVE                             00000447
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 48
+
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+DRIVE4                            00000459
+DRIVE5                            0000046F
+DRIVE6                            00000471
+DRIVE61                           00000475
+DRIVE7                            00000483
+DRIVE71                           00000487
+DRIVE8                            00000492
+DRIVES                            0000005A
+EEREAD                            00000020
+EEWRITE                           0000018A
+EE_CLEAR1                         00000204
+EE_KEY                            00000048
+EE_READ1                          00000202
+EE_WRITE0                         00000007
+EE_WRITE1                         00000206
+EE_WRITE2                         00000400
+ENTRY                             00000002
+ERASE                             00000289
+ERASE2                            00000290
+ETMP1                             00000030
+ETMP2                             00000031
+ETMP3                             00000032
+ETMP4                             00000033
+E_OK                              00000000
+FLAGS                             0000001F
+FLAGS1                            0000000F
+FNC                               0000018A
+FNC2                              0000018C
+FSR                               00000004
+FUNC                              0000000B
+HOP1                              00000008
+HOP2                              00000009
+HOP3                              0000000A
+HOP4                              0000000B
+IFNC                              00000032
+IFNC1                             00000034
+IGN                               00000000
+IMMO                              00000000
+IMMOB                             00000495
+IMMOB1                            00000498
+IMMOB2                            000004AA
+IMMOB3                            000004AE
+IMMOBS                            0000003C
+IND                               00000000
+KEY0                              00000011
+KEY1                              00000010
+KEY2                              00000012
+KEY3                              00000013
+KEY4                              00000014
+KEY5                              00000015
+KEY6                              00000016
+KEY7                              00000017
+KEYBASE                           00000040
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 49
+
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+KEYGEN                            0000021B
+KEYGEN2                           00000221
+KEY_LOOKUP                        0000003F
+LEARN                             00000003
+LEARNS                            000000C3
+LEARN_END                         000001C7
+LEARN_NOK                         000001E4
+LEARN_NOK2                        000001EB
+LEARN_NOK3                        000001F0
+LEARN_OK                          000001BD
+LEARN_OK2                         000001BF
+LEARN_OK3                         000001C4
+LED                               00000007
+LFLASH                            00000003
+LOCK                              00000004
+LRN_PTR                           00000001
+MAIN                              000002C1
+MAIN2                             000002D4
+MAIN3                             000002D5
+MAIN4                             000002E8
+MAIN5                             000002EF
+MAIN6                             000002F6
+MAIN7                             000002FD
+MASK                              0000000E
+MAS_KEY                           00000040
+MIN                               00000230
+M_BUT                             000003F9
+M_CHECK                           00000300
+M_CHECK0                          000003B0
+M_CHECK1                          000003BD
+M_CHECK2                          000003C5
+M_CNT                             00000386
+M_CNT1                            0000038D
+M_CNT3                            0000039F
+M_CNT_FAIL                        000003BA
+M_DEC                             00000349
+M_DIS                             00000372
+M_DIS2                            0000037E
+M_ERASE3                          0000029C
+M_HOP                             00000346
+M_LOOP                            00000306
+M_LOOP0                           00000008
+M_NEXT                            00000330
+M_NF                              0000033A
+M_PASS                            0000032D
+M_PTR                             000003E4
+M_RESYNC                          000003C9
+M_SERIAL                          00000316
+M_SERIAL2                         00000322
+M_SER_ERR                         00000330
+M_SL_UPDATE                       0000034E
+M_SUB                             000003A0
+M_TEST                            000004E2
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 50
+
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+M_TEST1                           000004E7
+M_TEST2                           000004FA
+M_TEST3                           00000505
+M_UPDATE                          000003D3
+M_ZERO                            0000030C
+NBITS                             00000042
+NORMAL                            00000000
+NTQ106                            00000005
+OUTBYT                            0000000E
+OVF                               00000007
+PA0                               00000005
+PA1                               00000006
+PASS1                             00000001
+PASS2                             00000002
+PC                                00000002
+PD                                00000003
+PFLASH                            00000004
+PLIGHT                            00000002
+PORTA                             00000005
+PORTB                             00000006
+PORTC                             00000007
+RAMS                              0000001D
+RCV0                              00000055
+RCV1                              00000057
+RCV10A                            0000007D
+RCV10B                            0000007F
+RCV11                             00000089
+RCV2                              0000005D
+RCV3                              0000005F
+RCV6                              00000069
+RCV7                              00000074
+RCV8                              0000007B
+RDCFG                             00000009
+READ0                             00000028
+READ_KEY                          000002A0
+READ_KEY2                         000002A6
+RECEIVE                           00000050
+REMOTE                            000004DF
+RESET                             00000000
+RESET1                            00000200
+RESET_P1                          000002B4
+RESYNC                            00000006
+RFIN                              00000003
+RMT0                              000000B3
+RMT01                             000000B4
+RMT1                              000000C4
+RMT11                             000000C7
+RMT21                             000000BA
+RMT22                             000000BC
+RMT3                              000000C8
+RMT4                              000000CA
+RMT_0                             000000B2
+ROTATE_KEY                        000000FA
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 51
+
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+ROTL                              0000001A
+ROTR                              00000014
+ROT_SHIFT                         0000000A
+RPT                               00000007
+RTCC                              00000001
+SAMPLE1                           0000008F
+SAMPLE2                           0000009B
+SAMPLE3                           000000AC
+SENDC                             00000004
+SENDC1                            00000171
+SENDC2                            0000017C
+SER_0                             00000017
+SER_1                             00000016
+SER_2                             00000015
+SER_3                             00000014
+SIREN                             00000001
+SSTATUS                           00000002
+STACK                             0000001E
+STATUS                            00000003
+S_RSTR                            00000001
+S_SEED1                           0000025A
+S_SEED2                           00000266
+TABLE                             000000E6
+TABLE_END                         000000ED
+TMP1                              00000010
+TMP2                              00000011
+TMP3                              00000012
+TMP4                              00000013
+TMPCNT                            00000004
+TMP_CNT                           0000000E
+TO                                00000004
+TRIG                              00000001
+TRISA                             00000009
+TRISB                             00000000
+TRISC                             000000FF
+TRUNK                             00000006
+TST_30                            00000131
+TST_END                           00000147
+TST_LEARN                         00000005
+TST_LEARN1                        00000149
+TST_LEARN2                        0000014E
+TST_LEARN3                        00000155
+TST_LEARN4                        0000015D
+TST_LEARN5                        0000015F
+TST_LEARN6                        0000016B
+TST_LEARN7                        0000016F
+TST_LED                           00000123
+TST_LED1                          00000129
+TST_PANIC                         0000013B
+TST_PLIGHT                        0000012A
+TST_PLIGHT1                       00000130
+TST_RPT                           00000136
+TST_RTCC                          00000006
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 52
+
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+TST_RTCC1                         0000010B
+TST_RTCC2                         00000112
+TXNUM                             0000000D
+TX_LOOKUP                         00000208
+TX_LOOKUP2                        0000020B
+UNLOCK                            00000005
+WAIT                              00000407
+WAIT1                             00000409
+WAIT250                           00000405
+WAIT50                            00000402
+WIPE_TX                           000001CD
+WIPE_TX1                          000001DA
+WRCFG                             00000008
+WRITE0                            00000196
+WRITE1                            0000019A
+WRITE2                            000001A0
+WRITE5                            000001B1
+WRITE6                            000001B6
+X1                                000000C7
+X2                                0000008B
+ZERO                              00000002
+__16C57                           00000001
+
+
+MEMORY USAGE MAP ('X' = Used,  '-' = Unused)
+
+0000 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+0040 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+0080 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+00C0 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+0100 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+0140 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+0180 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+01C0 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXX---------
+0200 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+0240 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+0280 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+02C0 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+0300 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+0340 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+0380 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+03C0 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXX----
+0400 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+0440 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+0480 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+04C0 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+MPASM 02.50 Released         SECSYS14.ASM   1-11-2002  15:33:39         PAGE 53
+
+
+MEMORY USAGE MAP ('X' = Used,  '-' = Unused)
+
+
+0500 : XXXXXXXXX------- ---------------- ---------------- ----------------
+07C0 : ---------------- ---------------- ---------------- ---------------X
+
+All other memory blocks unused.
+
+Program Memory Words Used:  1277
+Program Memory Words Free:   771
+
+
+Errors   :     3
+Warnings :     0 reported,     2 suppressed
+Messages :     0 reported,    45 suppressed
+
+
